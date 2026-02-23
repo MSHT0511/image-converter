@@ -85,6 +85,32 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
     """
     try:
         with Image.open(input_path) as img:
+            # アニメーションをサポートする形式
+            animation_formats = ['WEBP', 'GIF']
+            if AVIF_SUPPORTED:
+                animation_formats.append('AVIF')
+
+            # アニメーション画像かチェック
+            is_animated = getattr(img, 'is_animated', False) or (hasattr(img, 'n_frames') and img.n_frames > 1)
+
+            # アニメーションを維持する場合
+            if is_animated and output_format in animation_formats:
+                save_kwargs = {
+                    'format': output_format,
+                    'save_all': True,
+                    'duration': img.info.get('duration', 100),
+                    'loop': img.info.get('loop', 0),
+                }
+
+                # WebPとAVIFの場合は最適化オプションを追加
+                if output_format in ['WEBP', 'AVIF']:
+                    save_kwargs['optimize'] = True
+                    if output_format == 'WEBP':
+                        save_kwargs['quality'] = 80
+
+                img.save(output_path, **save_kwargs)
+                return True
+
             # 透過性を保持しない形式のみ白背景合成
             if output_format in ['JPEG', 'BMP'] and img.mode in ['RGBA', 'LA', 'P']:
                 rgb_img = Image.new('RGB', img.size, (255, 255, 255))
