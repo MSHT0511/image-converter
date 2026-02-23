@@ -143,12 +143,14 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
         return 0, 0
     
     # Find all supported image files
-    image_files: List[Path] = []
+    image_files_set = set()
     pattern = '**/*' if recursive else '*'
     
     for ext in SUPPORTED_FORMATS.keys():
-        image_files.extend(input_dir.glob(f"{pattern}{ext}"))
-        image_files.extend(input_dir.glob(f"{pattern}{ext.upper()}"))
+        image_files_set.update(input_dir.glob(f"{pattern}{ext}"))
+        image_files_set.update(input_dir.glob(f"{pattern}{ext.upper()}"))
+    
+    image_files = sorted(image_files_set)  # Convert to sorted list for consistent ordering
     
     if not image_files:
         print(f"No supported image files found in {input_dir}")
