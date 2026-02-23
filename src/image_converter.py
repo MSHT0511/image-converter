@@ -5,11 +5,25 @@ Image Converter CLI Tool
 Converts images between common formats including JPEG, PNG, BMP, GIF, TIFF, and WebP.
 """
 
+
 import argparse
 import os
 import sys
 from pathlib import Path
 from typing import List, Optional
+
+# AVIFサポート判定
+def check_avif_support() -> bool:
+    """Check if AVIF format is supported by Pillow."""
+    try:
+        from PIL import Image, features
+        # PIL.features.check()でAVIFエンコーダーの有無を確認
+        # pillow-avif-pluginがインストールされていれば自動的に統合される
+        return features.check('avif') or '.avif' in Image.registered_extensions()
+    except Exception:
+        return False
+
+AVIF_SUPPORTED = check_avif_support()
 
 try:
     from PIL import Image
@@ -18,17 +32,25 @@ except ImportError:
     sys.exit(1)
 
 
-# Supported image formats
-SUPPORTED_FORMATS = {
-    '.jpg': 'JPEG',
-    '.jpeg': 'JPEG',
-    '.png': 'PNG',
-    '.bmp': 'BMP',
-    '.gif': 'GIF',
-    '.tiff': 'TIFF',
-    '.tif': 'TIFF',
-    '.webp': 'WEBP',
-}
+
+# サポート形式を動的生成
+def get_supported_formats():
+    fmts = {
+        '.jpg': 'JPEG',
+        '.jpeg': 'JPEG',
+        '.png': 'PNG',
+        '.bmp': 'BMP',
+        '.gif': 'GIF',
+        '.tiff': 'TIFF',
+        '.tif': 'TIFF',
+        '.webp': 'WEBP',
+        '.ico': 'ICO',
+    }
+    if AVIF_SUPPORTED:
+        fmts['.avif'] = 'AVIF'
+    return fmts
+
+SUPPORTED_FORMATS = get_supported_formats()
 
 
 def is_supported_format(file_path: Path) -> bool:
@@ -63,16 +85,15 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
     """
     try:
         with Image.open(input_path) as img:
-            # Convert RGBA to RGB for formats that don't support transparency
+            # 透過性を保持しない形式のみ白背景合成
             if output_format in ['JPEG', 'BMP'] and img.mode in ['RGBA', 'LA', 'P']:
-                # Create a white background
                 rgb_img = Image.new('RGB', img.size, (255, 255, 255))
                 if img.mode == 'P':
                     img = img.convert('RGBA')
                 rgb_img.paste(img, mask=img.split()[-1] if img.mode in ['RGBA', 'LA'] else None)
                 img = rgb_img
-
-            # Save the image in the target format
+            # ICO/AVIFは透過性保持（PillowのICO/AVIFはRGBA対応）
+            # それ以外は既存通り
             img.save(output_path, format=output_format)
             return True
     except Exception as e:
@@ -204,10 +225,14 @@ Examples:
         help='Input image file or directory'
     )
 
+    # サポート形式を動的にchoicesへ
+    choices = ['jpeg', 'jpg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp', 'ico']
+    if AVIF_SUPPORTED:
+        choices.append('avif')
     parser.add_argument(
         'format',
         type=str,
-        choices=['jpeg', 'jpg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp'],
+        choices=choices,
         help='Output image format'
     )
 
