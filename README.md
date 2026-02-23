@@ -12,7 +12,7 @@
 
 ## 🌟 機能
 
-- **複数フォーマット対応**: JPEG、PNG、BMP、GIF、TIFF、WebP間での変換
+- **複数フォーマット対応**: JPEG、PNG、BMP、GIF、TIFF、WebP、ICO、AVIF間での変換
 - **バッチ処理**: ディレクトリ内の画像を一度に変換
 - **再帰モード**: サブディレクトリを自動的に処理
 - **柔軟な出力**: カスタム出力ディレクトリの指定
@@ -21,14 +21,16 @@
 
 ## 📋 サポートしているフォーマット
 
-| 入力/出力フォーマット |
-|---------------------|
-| JPEG (.jpg, .jpeg)  |
-| PNG (.png)          |
-| BMP (.bmp)          |
-| GIF (.gif)          |
-| TIFF (.tiff, .tif)  |
-| WebP (.webp)        |
+| 入力/出力フォーマット | 透過サポート | 備考 |
+|---------------------|-------------|------|
+| JPEG (.jpg, .jpeg)  | ❌ | 標準的な写真形式 |
+| PNG (.png)          | ✅ | ロスレス圧縮 |
+| BMP (.bmp)          | ❌ | Windows標準形式 |
+| GIF (.gif)          | ✅ | アニメーション対応 |
+| TIFF (.tiff, .tif)  | ✅ | 高品質画像 |
+| WebP (.webp)        | ✅ | 次世代画像形式 |
+| ICO (.ico)          | ✅ | アイコン形式 |
+| AVIF (.avif)        | ✅ | 最新の高効率形式 |
 
 ## 🚀 インストール
 
@@ -50,6 +52,29 @@ pip install -r requirements.txt
 # (オプション) 開発モードでインストール
 pip install -e .
 ```
+
+### AVIFサポート（オプション）
+
+AVIF形式のサポートには追加の依存関係が必要です。AVIFを使用しない場合でも、他のすべてのフォーマット（ICOを含む）は正常に動作します。
+
+**Windows:**
+```bash
+pip install pillow-avif-plugin
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get install libavif-dev
+pip install pillow-avif-plugin
+```
+
+**macOS:**
+```bash
+brew install libavif
+pip install pillow-avif-plugin
+```
+
+AVIFサポートが利用できない場合、ツールは自動的にAVIF形式を無効化し、他のすべての形式で正常に動作します。
 
 ## 📖 使い方
 
@@ -106,7 +131,7 @@ python src/image_converter.py input/ webp -o output/ --no-confirm --no-recursive
 ```
 位置引数:
   input                 入力画像ファイルまたはディレクトリ
-  format                出力画像フォーマット (jpeg, jpg, png, bmp, gif, tiff, tif, webp)
+  format                出力画像フォーマット (jpeg, jpg, png, bmp, gif, tiff, tif, webp, ico, avif)
 
 オプション引数:
   -h, --help            ヘルプメッセージを表示して終了
@@ -187,13 +212,31 @@ python src/image_converter.py my_photos/ jpeg --output-dir jpg_versions/
 python src/image_converter.py logo.png jpeg
 ```
 
+### 例4: アイコン（ICO）形式への変換
+
+```bash
+# PNGからICOへ（透過性を保持）
+python src/image_converter.py logo.png ico
+```
+
+### 例5: 次世代フォーマット（AVIF）への変換
+
+```bash
+# JPEGからAVIFへ（高圧縮率）
+python src/image_converter.py photo.jpg avif
+# 出力: Converted: photo.jpg -> converted/photo.avif
+```
+
 ## 🐛 トラブルシューティング
 
 **問題**: "Error: Pillow is not installed"
 - **解決策**: `pip install Pillow`を実行
 
 **問題**: "Error: Unsupported file format"
-- **解決策**: ファイルがサポートされている拡張子(.jpg, .png, .bmp, .gif, .tiff, .webp)を持っているか確認
+- **解決策**: ファイルがサポートされている拡張子(.jpg, .png, .bmp, .gif, .tiff, .webp, .ico, .avif)を持っているか確認
+
+**問題**: AVIF形式が選択肢に表示されない
+- **解決策**: `pip install pillow-avif-plugin`を実行してAVIFサポートを有効化。システムによっては`libavif`のインストールが必要な場合があります。
 
 **問題**: ファイル上書き時に権限が拒否される
 - **解決策**: `--no-confirm`フラグを使用するか、書き込み権限があることを確認
@@ -205,6 +248,7 @@ python src/image_converter.py logo.png jpeg
 ## 🙏 謝辞
 
 - [Pillow (PIL Fork)](https://python-pillow.org/) - The Python Imaging Library を使用して構築
+- [pillow-avif-plugin](https://github.com/fdintino/pillow-avif-plugin) - AVIFフォーマットサポート
 - [pytest](https://pytest.org/)でテスト
 
 ## 📞 連絡先
