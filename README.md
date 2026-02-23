@@ -4,20 +4,24 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A simple and efficient CLI tool to convert images between common formats.
+一般的な画像フォーマット間で変換を行うシンプルで効率的なCLIツール
 
-## 🌟 Features
+## ⚠️ 免責事項
 
-- **Multiple Format Support**: Convert between JPEG, PNG, BMP, GIF, TIFF, and WebP
-- **Batch Processing**: Convert entire directories of images at once
-- **Recursive Mode**: Process subdirectories automatically
-- **Flexible Output**: Specify custom output directories
-- **Safe Operations**: Confirmation prompts before overwriting existing files
-- **Transparency Handling**: Automatically handles alpha channels when converting to formats that don't support transparency
+このプロジェクトは個人開発のツールです。メンテナンスやサポートは保証されません。使用は自己責任でお願いします。
 
-## 📋 Supported Formats
+## 🌟 機能
 
-| Input/Output Formats |
+- **複数フォーマット対応**: JPEG、PNG、BMP、GIF、TIFF、WebP間での変換
+- **バッチ処理**: ディレクトリ内の画像を一度に変換
+- **再帰モード**: サブディレクトリを自動的に処理
+- **柔軟な出力**: カスタム出力ディレクトリの指定
+- **安全な操作**: 既存ファイルを上書きする前に確認プロンプトを表示
+- **透過処理**: 透過をサポートしないフォーマットへの変換時にアルファチャンネルを自動処理
+
+## 📋 サポートしているフォーマット
+
+| 入力/出力フォーマット |
 |---------------------|
 | JPEG (.jpg, .jpeg)  |
 | PNG (.png)          |
@@ -26,149 +30,149 @@ A simple and efficient CLI tool to convert images between common formats.
 | TIFF (.tiff, .tif)  |
 | WebP (.webp)        |
 
-## 🚀 Installation
+## 🚀 インストール
 
-### Prerequisites
+### 前提条件
 
-- Python 3.9 or higher
-- pip package manager
+- Python 3.9以上
+- pipパッケージマネージャー
 
-### Install from source
+### ソースからインストール
 
 ```bash
-# Clone the repository
+# リポジトリをクローン
 git clone https://github.com/YOUR_USERNAME/image-converter.git
 cd image-converter
 
-# Install dependencies
+# 依存関係をインストール
 pip install -r requirements.txt
 
-# (Optional) Install in development mode
+# (オプション) 開発モードでインストール
 pip install -e .
 ```
 
-## 📖 Usage
+## 📖 使い方
 
-### Basic Usage
+### 基本的な使い方
 
-Convert a single image:
+単一の画像を変換:
 
 ```bash
 python src/image_converter.py input.png jpeg
 ```
 
-Convert with custom output directory:
+カスタム出力ディレクトリを指定して変換:
 
 ```bash
 python src/image_converter.py photo.jpg webp --output-dir converted/
 ```
 
-### Directory Conversion
+### ディレクトリの変換
 
-Convert all images in a directory:
+ディレクトリ内のすべての画像を変換:
 
 ```bash
 python src/image_converter.py images/ png
 ```
 
-Convert with output directory (preserves subdirectory structure):
+出力ディレクトリを指定して変換（サブディレクトリ構造を保持）:
 
 ```bash
 python src/image_converter.py photos/ jpeg --output-dir converted/
 ```
 
-Non-recursive mode (only process files in the root directory):
+非再帰モード（ルートディレクトリのファイルのみ処理）:
 
 ```bash
 python src/image_converter.py images/ webp --no-recursive
 ```
 
-### Advanced Options
+### 高度なオプション
 
-Skip confirmation prompts:
+確認プロンプトをスキップ:
 
 ```bash
 python src/image_converter.py images/ jpeg --no-confirm
 ```
 
-Combine multiple options:
+複数のオプションを組み合わせ:
 
 ```bash
 python src/image_converter.py input/ webp -o output/ --no-confirm --no-recursive
 ```
 
-### Command-Line Arguments
+### コマンドライン引数
 
 ```
-positional arguments:
-  input                 Input image file or directory
-  format                Output image format (jpeg, jpg, png, bmp, gif, tiff, tif, webp)
+位置引数:
+  input                 入力画像ファイルまたはディレクトリ
+  format                出力画像フォーマット (jpeg, jpg, png, bmp, gif, tiff, tif, webp)
 
-optional arguments:
-  -h, --help            Show help message and exit
-  -o, --output-dir DIR  Output directory (default: same as input)
-  --no-confirm          Skip confirmation when overwriting existing files
-  --no-recursive        Do not process subdirectories recursively
+オプション引数:
+  -h, --help            ヘルプメッセージを表示して終了
+  -o, --output-dir DIR  出力ディレクトリ (デフォルト: 入力と同じ)
+  --no-confirm          既存ファイルを上書きする際の確認をスキップ
+  --no-recursive        サブディレクトリを再帰的に処理しない
 ```
 
-## 🧪 Testing
+## 🧪 テスト
 
-Run the test suite:
+テストスイートを実行:
 
 ```bash
-# Install development dependencies
+# 開発依存関係をインストール
 pip install -r requirements-dev.txt
 
-# Run tests
+# テストを実行
 pytest tests/ -v
 
-# Run tests with coverage report
+# カバレッジレポート付きでテストを実行
 pytest tests/ -v --cov=src --cov-report=term-missing
 ```
 
-## 🔧 Development
+## 🔧 開発
 
-### Project Structure
+### プロジェクト構造
 
 ```
 image-converter/
 ├── src/
 │   ├── __init__.py
-│   └── image_converter.py    # Main CLI implementation
+│   └── image_converter.py    # メインのCLI実装
 ├── tests/
-│   └── test_image_converter.py  # Unit tests
+│   └── test_image_converter.py  # ユニットテスト
 ├── .github/
 │   └── workflows/
 │       └── test.yml          # GitHub Actions CI/CD
 ├── .gitignore
-├── pyproject.toml            # Project configuration
-├── requirements.txt          # Runtime dependencies
-├── requirements-dev.txt      # Development dependencies
+├── pyproject.toml            # プロジェクト設定
+├── requirements.txt          # ランタイム依存関係
+├── requirements-dev.txt      # 開発依存関係
 └── README.md
 ```
 
-### Contributing
+### 貢献
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. リポジトリをフォーク
+2. フィーチャーブランチを作成 (`git checkout -b feature/amazing-feature`)
+3. 変更をコミット (`git commit -m 'Add amazing feature'`)
+4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
+5. プルリクエストを作成
 
-## 📝 Examples
+## 📝 使用例
 
-### Example 1: Convert WebP to PNG
+### 例1: WebPからPNGへ変換
 
 ```bash
 python src/image_converter.py photo.webp png
-# Output: Converted: photo.webp -> photo.png
+# 出力: Converted: photo.webp -> photo.png
 ```
 
-### Example 2: Batch Convert Directory
+### 例2: ディレクトリのバッチ変換
 
 ```bash
 python src/image_converter.py my_photos/ jpeg --output-dir jpg_versions/
-# Output: 
+# 出力: 
 # Found 15 image(s) to convert
 # Converted: my_photos/img1.png -> jpg_versions/img1.jpeg
 # Converted: my_photos/img2.webp -> jpg_versions/img2.jpeg
@@ -176,36 +180,36 @@ python src/image_converter.py my_photos/ jpeg --output-dir jpg_versions/
 # Conversion complete: 15 succeeded, 0 failed
 ```
 
-### Example 3: Convert with Transparency Handling
+### 例3: 透過処理での変換
 
 ```bash
-# PNG with transparency -> JPEG (white background added automatically)
+# 透過PNGからJPEGへ (自動的に白い背景が追加される)
 python src/image_converter.py logo.png jpeg
 ```
 
-## 🐛 Troubleshooting
+## 🐛 トラブルシューティング
 
-**Issue**: "Error: Pillow is not installed"
-- **Solution**: Run `pip install Pillow`
+**問題**: "Error: Pillow is not installed"
+- **解決策**: `pip install Pillow`を実行
 
-**Issue**: "Error: Unsupported file format"
-- **Solution**: Check that your file has a supported extension (.jpg, .png, .bmp, .gif, .tiff, .webp)
+**問題**: "Error: Unsupported file format"
+- **解決策**: ファイルがサポートされている拡張子(.jpg, .png, .bmp, .gif, .tiff, .webp)を持っているか確認
 
-**Issue**: Permission denied when overwriting files
-- **Solution**: Use `--no-confirm` flag or ensure you have write permissions
+**問題**: ファイル上書き時に権限が拒否される
+- **解決策**: `--no-confirm`フラグを使用するか、書き込み権限があることを確認
 
-## 📄 License
+## 📄 ライセンス
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+このプロジェクトはMITライセンスの下でライセンスされています。詳細はLICENSEファイルを参照してください。
 
-## 🙏 Acknowledgments
+## 🙏 謝辞
 
-- Built with [Pillow (PIL Fork)](https://python-pillow.org/) - The Python Imaging Library
-- Tested with [pytest](https://pytest.org/)
+- [Pillow (PIL Fork)](https://python-pillow.org/) - The Python Imaging Library を使用して構築
+- [pytest](https://pytest.org/)でテスト
 
-## 📞 Contact
+## 📞 連絡先
 
-For issues, questions, or suggestions, please open an issue on GitHub.
+問題、質問、提案がある場合は、GitHubでissueを開いてください。
 
 ---
 
