@@ -105,7 +105,7 @@ class TestOutputPath:
         """Test output path in the same directory."""
         input_path = temp_dir / 'test.png'
         output_path = get_output_path(input_path, 'jpeg')
-        assert output_path == temp_dir / 'test.jpeg'
+        assert output_path == temp_dir / 'converted' / 'test.jpeg'
     
     def test_get_output_path_custom_directory(self, temp_dir):
         """Test output path in a custom directory."""
@@ -192,7 +192,7 @@ class TestProcessFile:
         result = process_file(input_path, 'jpeg', no_confirm=True)
         
         assert result
-        output_path = temp_dir / 'test.jpeg'
+        output_path = temp_dir / 'converted' / 'test.jpeg'
         assert output_path.exists()
     
     def test_process_file_with_output_dir(self, sample_images, temp_dir):
@@ -234,10 +234,10 @@ class TestProcessDirectory:
         assert success == 3  # All 3 images should be converted
         assert fail == 0
         
-        # Check that output files exist
-        assert (input_dir / 'image0.jpeg').exists()
-        assert (input_dir / 'subdir1' / 'image1.jpeg').exists()
-        assert (input_dir / 'subdir2' / 'image2.jpeg').exists()
+        # Check that output files exist in the converted folder
+        assert (input_dir / 'converted' / 'image0.jpeg').exists()
+        assert (input_dir / 'converted' / 'subdir1' / 'image1.jpeg').exists()
+        assert (input_dir / 'converted' / 'subdir2' / 'image2.jpeg').exists()
     
     def test_process_directory_non_recursive(self, sample_directory, temp_dir):
         """Test non-recursive directory processing."""
@@ -247,7 +247,7 @@ class TestProcessDirectory:
         
         # Only the image in the root directory should be converted
         assert success == 1
-        assert (input_dir / 'image0.webp').exists()
+        assert (input_dir / 'converted' / 'image0.webp').exists()
         assert not (input_dir / 'subdir1' / 'image1.webp').exists()
     
     def test_process_directory_with_output_dir(self, sample_directory, temp_dir):

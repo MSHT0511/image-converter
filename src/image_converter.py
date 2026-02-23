@@ -43,18 +43,21 @@ def get_output_path(input_path: Path, output_format: str, output_dir: Optional[P
         stem = input_path.stem
         return output_dir / f"{stem}.{output_format.lower()}"
     else:
-        return input_path.parent / f"{input_path.stem}.{output_format.lower()}"
+        # If no output directory is specified, create a "converted" folder in the same directory
+        default_output_dir = input_path.parent / "converted"
+        default_output_dir.mkdir(parents=True, exist_ok=True)
+        return default_output_dir / f"{input_path.stem}.{output_format.lower()}"
 
 
 def convert_image(input_path: Path, output_path: Path, output_format: str) -> bool:
     """
     Convert an image from one format to another.
-    
+
     Args:
         input_path: Path to the input image file
         output_path: Path to the output image file
         output_format: Target format (e.g., 'JPEG', 'PNG', 'WEBP')
-    
+
     Returns:
         True if conversion was successful, False otherwise
     """
@@ -68,7 +71,7 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
                     img = img.convert('RGBA')
                 rgb_img.paste(img, mask=img.split()[-1] if img.mode in ['RGBA', 'LA'] else None)
                 img = rgb_img
-            
+
             # Save the image in the target format
             img.save(output_path, format=output_format)
             return True
@@ -77,44 +80,44 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
         return False
 
 
-def process_file(input_path: Path, output_format: str, output_dir: Optional[Path] = None, 
+def process_file(input_path: Path, output_format: str, output_dir: Optional[Path] = None,
                 no_confirm: bool = False) -> bool:
     """
     Process a single image file.
-    
+
     Args:
         input_path: Path to the input image file
         output_format: Target format (e.g., 'jpeg', 'png', 'webp')
         output_dir: Optional output directory
         no_confirm: Skip confirmation for overwriting existing files
-    
+
     Returns:
         True if processing was successful, False otherwise
     """
     if not input_path.is_file():
         print(f"Error: File not found: {input_path}", file=sys.stderr)
         return False
-    
+
     if not is_supported_format(input_path):
         print(f"Error: Unsupported file format: {input_path.suffix}", file=sys.stderr)
         return False
-    
+
     # Get the PIL format name
     format_upper = output_format.upper()
     if format_upper == 'JPG':
         format_upper = 'JPEG'
     elif format_upper == 'TIF':
         format_upper = 'TIFF'
-    
+
     output_path = get_output_path(input_path, output_format, output_dir)
-    
+
     # Check if output file already exists
     if output_path.exists() and not no_confirm:
         response = input(f"File {output_path} already exists. Overwrite? (y/n): ")
         if response.lower() != 'y':
             print(f"Skipped: {input_path}")
             return False
-    
+
     # Convert the image
     if convert_image(input_path, output_path, format_upper):
         print(f"Converted: {input_path} -> {output_path}")
@@ -127,55 +130,57 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
                      no_confirm: bool = False, recursive: bool = True) -> tuple[int, int]:
     """
     Process all images in a directory.
-    
+
     Args:
         input_dir: Path to the input directory
         output_format: Target format (e.g., 'jpeg', 'png', 'webp')
         output_dir: Optional output directory
         no_confirm: Skip confirmation for overwriting existing files
         recursive: Process subdirectories recursively
-    
+
     Returns:
         Tuple of (successful_count, failed_count)
     """
     if not input_dir.is_dir():
         print(f"Error: Directory not found: {input_dir}", file=sys.stderr)
         return 0, 0
-    
+
     # Find all supported image files
     image_files_set = set()
     pattern = '**/*' if recursive else '*'
-    
+
     for ext in SUPPORTED_FORMATS.keys():
         image_files_set.update(input_dir.glob(f"{pattern}{ext}"))
         image_files_set.update(input_dir.glob(f"{pattern}{ext.upper()}"))
-    
+
     image_files = sorted(image_files_set)  # Convert to sorted list for consistent ordering
-    
+
     if not image_files:
         print(f"No supported image files found in {input_dir}")
         return 0, 0
-    
+
     print(f"Found {len(image_files)} image(s) to convert")
-    
+
     success_count = 0
     fail_count = 0
-    
+
+    # Set default output directory if not specified
+    actual_output_dir = output_dir if output_dir else input_dir / "converted"
+
     for img_file in image_files:
-        # Calculate relative output directory if output_dir is specified
+        # Calculate relative output directory
         rel_output_dir = None
-        if output_dir:
-            if recursive:
-                rel_path = img_file.parent.relative_to(input_dir)
-                rel_output_dir = output_dir / rel_path
-            else:
-                rel_output_dir = output_dir
-        
+        if recursive:
+            rel_path = img_file.parent.relative_to(input_dir)
+            rel_output_dir = actual_output_dir / rel_path
+        else:
+            rel_output_dir = actual_output_dir
+
         if process_file(img_file, output_format, rel_output_dir, no_confirm):
             success_count += 1
         else:
             fail_count += 1
-    
+
     return success_count, fail_count
 
 
@@ -192,62 +197,62 @@ Examples:
   %(prog)s pics/ jpeg -o converted/          # Convert all images and save to converted/
         """
     )
-    
+
     parser.add_argument(
         'input',
         type=str,
         help='Input image file or directory'
     )
-    
+
     parser.add_argument(
         'format',
         type=str,
         choices=['jpeg', 'jpg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp'],
         help='Output image format'
     )
-    
+
     parser.add_argument(
         '-o', '--output-dir',
         type=str,
         help='Output directory (default: same as input)'
     )
-    
+
     parser.add_argument(
         '--no-confirm',
         action='store_true',
         help='Skip confirmation when overwriting existing files'
     )
-    
+
     parser.add_argument(
         '--no-recursive',
         action='store_true',
         help='Do not process subdirectories recursively (only for directory input)'
     )
-    
+
     return parser.parse_args()
 
 
 def main():
     """Main entry point for the CLI tool."""
     args = parse_args()
-    
+
     input_path = Path(args.input)
     output_format = args.format.lower()
     output_dir = Path(args.output_dir) if args.output_dir else None
-    
+
     if not input_path.exists():
         print(f"Error: Path not found: {input_path}", file=sys.stderr)
         return 1
-    
+
     # Process file or directory
     if input_path.is_file():
         success = process_file(input_path, output_format, output_dir, args.no_confirm)
         return 0 if success else 1
     elif input_path.is_dir():
         success_count, fail_count = process_directory(
-            input_path, 
-            output_format, 
-            output_dir, 
+            input_path,
+            output_format,
+            output_dir,
             args.no_confirm,
             recursive=not args.no_recursive
         )
