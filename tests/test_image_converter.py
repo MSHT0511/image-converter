@@ -196,6 +196,19 @@ class TestImageConversion:
             # AVIFは透過性を保持
             assert img.mode in ('RGBA', 'RGB', 'P')
 
+    def test_avif_lossless_conversion(self, sample_images, temp_dir):
+        """Test AVIF lossless compression."""
+        input_path = sample_images['png']
+        output_path = temp_dir / 'output_lossless.avif'
+
+        assert convert_image(input_path, output_path, 'AVIF', lossless=True)
+        assert output_path.exists()
+
+        with Image.open(output_path) as img:
+            assert img.format == 'AVIF'
+            # Note: Cannot directly verify lossless flag from loaded image,
+            # but we can ensure the conversion succeeded without errors
+
     def test_convert_png_to_jpeg(self, sample_images, temp_dir):
         """Test PNG to JPEG conversion."""
         input_path = sample_images['png']
@@ -218,6 +231,19 @@ class TestImageConversion:
 
         with Image.open(output_path) as img:
             assert img.format == 'WEBP'
+
+    def test_webp_lossless_conversion(self, sample_images, temp_dir):
+        """Test WebP lossless compression."""
+        input_path = sample_images['png']
+        output_path = temp_dir / 'output_lossless.webp'
+
+        assert convert_image(input_path, output_path, 'WEBP', lossless=True)
+        assert output_path.exists()
+
+        with Image.open(output_path) as img:
+            assert img.format == 'WEBP'
+            # Note: Cannot directly verify lossless flag from loaded image,
+            # but we can ensure the conversion succeeded without errors
 
     def test_convert_png_to_png(self, sample_images, temp_dir):
         """Test PNG to PNG conversion (same format)."""
