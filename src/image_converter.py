@@ -1,3 +1,51 @@
+def _convert_single_file(args_tuple):
+    """Wrapper function for parallel processing."""
+    img_file, output_format, rel_output_dir, no_confirm = args_tuple
+    try:
+        success = process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False)
+        return (success, str(img_file))
+    except Exception as e:
+        print(f"Error processing {img_file}: {e}", file=sys.stderr)
+        return (False, str(img_file))
+
+
+def _process_directory_parallel(input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files):
+    """Process directory with parallel execution."""
+    actual_output_dir = output_dir if output_dir else input_dir / "converted"
+    max_workers = workers or os.cpu_count()
+    success_count = 0
+    fail_count = 0
+    tasks = []
+    for img_file in image_files:
+        if recursive:
+            rel_path = img_file.parent.relative_to(input_dir)
+            rel_output_dir = actual_output_dir / rel_path
+        else:
+            rel_output_dir = actual_output_dir
+        tasks.append((img_file, output_format, rel_output_dir, no_confirm))
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_convert_single_file, task): task for task in tasks}
+            with tqdm(total=len(futures), desc="Converting images", unit="file") as pbar:
+                for future in as_completed(futures):
+                    try:
+                        success, img_file = future.result()
+                        if success:
+                            success_count += 1
+                        else:
+                            fail_count += 1
+                    except Exception as e:
+                        print(f"Error in worker: {e}", file=sys.stderr)
+                        fail_count += 1
+                    pbar.update(1)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user. Cancelling remaining tasks...", file=sys.stderr)
+        # tqdmバーを閉じる
+        try:
+            pbar.close()
+        except Exception:
+            pass
+    return success_count, fail_count
 #!/usr/bin/env python3
 """
 Image Converter CLI Tool
@@ -11,6 +59,11 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# 並列処理・進捗バー用
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
+import multiprocessing
 
 
 # Custom Exception Classes
@@ -247,7 +300,7 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
 
 
 def process_file(input_path: Path, output_format: str, output_dir: Optional[Path] = None,
-                no_confirm: bool = False) -> bool:
+                no_confirm: bool = False, verbose: bool = True) -> bool:
     """
     Process a single image file.
 
@@ -256,6 +309,7 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
         output_format: Target format (e.g., 'jpeg', 'png', 'webp')
         output_dir: Optional output directory
         no_confirm: Skip confirmation for overwriting existing files
+        verbose: Print conversion messages (default: True)
 
     Returns:
         True if processing was successful, False otherwise
@@ -286,14 +340,16 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
 
     # Convert the image
     if convert_image(input_path, output_path, format_upper):
-        print(f"Converted: {input_path} -> {output_path}")
+        if verbose:
+            print(f"Converted: {input_path} -> {output_path}")
         return True
     else:
         return False
 
 
 def process_directory(input_dir: Path, output_format: str, output_dir: Optional[Path] = None,
-                     no_confirm: bool = False, recursive: bool = True) -> Tuple[int, int]:
+                     no_confirm: bool = False, recursive: bool = True,
+                     parallel: bool = False, workers: Optional[int] = None) -> Tuple[int, int]:
     """Process all images in a directory.
 
     Args:
@@ -327,26 +383,24 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
 
     print(f"Found {len(image_files)} image(s) to convert")
 
+    # 並列処理フラグで分岐
+    if parallel:
+        return _process_directory_parallel(input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files)
+
     success_count = 0
     fail_count = 0
-
-    # Set default output directory if not specified
     actual_output_dir = output_dir if output_dir else input_dir / "converted"
-
-    for img_file in image_files:
-        # Calculate relative output directory
+    for img_file in tqdm(image_files, desc="Converting images", unit="file"):
         rel_output_dir = None
         if recursive:
             rel_path = img_file.parent.relative_to(input_dir)
             rel_output_dir = actual_output_dir / rel_path
         else:
             rel_output_dir = actual_output_dir
-
-        if process_file(img_file, output_format, rel_output_dir, no_confirm):
+        if process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False):
             success_count += 1
         else:
             fail_count += 1
-
     return success_count, fail_count
 
 
@@ -392,6 +446,18 @@ Examples:
         '-o', '--output-dir',
         type=str,
         help='Output directory (default: same as input)'
+    )
+
+    parser.add_argument(
+        '--parallel', '-p',
+        action='store_true',
+        help='Enable parallel processing for batch conversions'
+    )
+    parser.add_argument(
+        '--workers', '-w',
+        type=int,
+        default=None,
+        help='Number of parallel workers (default: CPU count, only used with --parallel)'
     )
 
     parser.add_argument(
@@ -449,7 +515,9 @@ def main() -> int:
             output_format,
             output_dir,
             args.no_confirm,
-            recursive=not args.no_recursive
+            recursive=not args.no_recursive,
+            parallel=args.parallel,
+            workers=args.workers
         )
         print(f"\nConversion complete: {success_count} succeeded, {fail_count} failed")
         return 0 if fail_count == 0 else 1

@@ -1,3 +1,58 @@
+
+# 並列処理テスト
+import shutil
+
+class TestParallelProcessing:
+    def test_parallel_processing_enabled(self, sample_images, temp_dir):
+        # 複数画像を作成
+        for i in range(5):
+            img = Image.new('RGB', (50, 50), color='blue')
+            img.save(temp_dir / f'img_{i}.png', 'PNG')
+        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
+        assert success >= 5
+        assert fail == 0
+
+    def test_parallel_processing_disabled(self, sample_images, temp_dir):
+        for i in range(3):
+            img = Image.new('RGB', (30, 30), color='green')
+            img.save(temp_dir / f'g_{i}.png', 'PNG')
+        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, False, None)
+        assert success >= 3
+        assert fail == 0
+
+    def test_parallel_workers_count(self, sample_images, temp_dir):
+        for i in range(4):
+            img = Image.new('RGB', (40, 40), color='yellow')
+            img.save(temp_dir / f'y_{i}.png', 'PNG')
+        # workers=1(シングルプロセス)
+        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, 1)
+        assert success >= 4
+        assert fail == 0
+
+    def test_parallel_with_errors(self, temp_dir):
+        # 壊れた画像ファイルを混ぜる
+        img = Image.new('RGB', (20, 20), color='red')
+        img.save(temp_dir / 'ok.png', 'PNG')
+        with open(temp_dir / 'broken.png', 'wb') as f:
+            f.write(b'not an image')
+        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
+        assert success >= 1
+        assert fail >= 1
+
+    def test_parallel_output_consistency(self, temp_dir):
+        # 同じ画像セットで順次・並列の出力ファイル名が一致するか
+        for i in range(2):
+            img = Image.new('RGB', (60, 60), color='purple')
+            img.save(temp_dir / f'p_{i}.png', 'PNG')
+        out_seq = temp_dir / 'out_seq'
+        out_par = temp_dir / 'out_par'
+        out_seq.mkdir()
+        out_par.mkdir()
+        process_directory(temp_dir, 'jpeg', out_seq, True, True, False, None)
+        process_directory(temp_dir, 'jpeg', out_par, True, True, True, 2)
+        seq_files = sorted([f.name for f in out_seq.glob('*.jpeg')])
+        par_files = sorted([f.name for f in out_par.glob('*.jpeg')])
+        assert seq_files == par_files
 """
 Unit tests for image_converter module.
 """
@@ -242,6 +297,43 @@ class TestProcessFile:
         result = process_file(input_path, 'jpeg', no_confirm=True)
 
         assert not result
+
+    def test_process_file_verbose_true(self, sample_images, temp_dir, capsys):
+        """Test that verbose=True prints conversion message."""
+        input_path = sample_images['png']
+        result = process_file(input_path, 'jpeg', no_confirm=True, verbose=True)
+
+        assert result
+
+        # 標準出力をキャプチャして"Converted:"メッセージがあることを確認
+        captured = capsys.readouterr()
+        assert "Converted:" in captured.out
+        assert str(input_path) in captured.out
+
+    def test_process_file_verbose_false(self, sample_images, temp_dir, capsys):
+        """Test that verbose=False suppresses conversion message."""
+        input_path = sample_images['png']
+        result = process_file(input_path, 'webp', no_confirm=True, verbose=False)
+
+        assert result
+        output_path = temp_dir / 'converted' / 'test.webp'
+        assert output_path.exists()
+
+        # 標準出力をキャプチャして"Converted:"メッセージがないことを確認
+        captured = capsys.readouterr()
+        assert "Converted:" not in captured.out
+
+    def test_process_file_verbose_default(self, sample_images, temp_dir, capsys):
+        """Test that default behavior is verbose=True."""
+        input_path = sample_images['png']
+        # verboseパラメータを省略（デフォルト動作）
+        result = process_file(input_path, 'bmp', no_confirm=True)
+
+        assert result
+
+        # デフォルトでverbose出力があることを確認
+        captured = capsys.readouterr()
+        assert "Converted:" in captured.out
 
 
 class TestProcessDirectory:

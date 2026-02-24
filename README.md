@@ -14,6 +14,8 @@
 
 - **複数フォーマット対応**: JPEG、PNG、BMP、GIF、TIFF、WebP、ICO、AVIF間での変換
 - **バッチ処理**: ディレクトリ内の画像を一度に変換
+- **並列処理**: マルチコアCPUを活用した高速変換（3-4倍の高速化）
+- **プログレスバー**: バッチ変換の進捗状況をリアルタイム表示
 - **再帰モード**: サブディレクトリを自動的に処理
 - **柔軟な出力**: カスタム出力ディレクトリの指定
 - **安全な操作**: 既存ファイルを上書きする前に確認プロンプトを表示
@@ -114,6 +116,30 @@ python src/image_converter.py images/ webp --no-recursive
 
 ### 高度なオプション
 
+#### 並列処理
+
+並列処理で高速変換（CPUコア数分のワーカーを自動使用）:
+
+```bash
+python src/image_converter.py images/ webp --parallel
+```
+
+ワーカー数を指定:
+
+```bash
+python src/image_converter.py photos/ jpeg --parallel --workers 4
+```
+
+**並列処理のガイドライン:**
+- **ワーカー未指定**: システムのCPUコア数分のワーカーを自動使用（最大効率）
+- **小規模（< 20ファイル）**: `--workers 2-4` 推奨（プロセス起動オーバーヘッド削減）
+- **中〜大規模（≥ 20ファイル）**: `--parallel` のみで自動最適化
+- **メモリ制約あり**: `--workers` で制限（例: `--workers 4`）
+
+> ⚠️ 並列処理は大量画像で特に効果的ですが、メモリ使用量が増加します。ワーカー数 × 画像サイズ分のメモリが必要です。
+
+#### その他のオプション
+
 確認プロンプトをスキップ:
 
 ```bash
@@ -136,6 +162,8 @@ python src/image_converter.py input/ webp -o output/ --no-confirm --no-recursive
 オプション引数:
   -h, --help            ヘルプメッセージを表示して終了
   -o, --output-dir DIR  出力ディレクトリ (デフォルト: 入力と同じ)
+  -p, --parallel        並列処理を有効化（バッチ変換のみ）
+  -w, --workers N       並列ワーカー数（デフォルト: CPUコア数、--parallelと併用）
   --no-confirm          既存ファイルを上書きする際の確認をスキップ
   --no-recursive        サブディレクトリを再帰的に処理しない
 ```
@@ -199,9 +227,19 @@ python src/image_converter.py photo.webp png
 python src/image_converter.py my_photos/ jpeg --output-dir jpg_versions/
 # 出力: 
 # Found 15 image(s) to convert
-# Converted: my_photos/img1.png -> jpg_versions/img1.jpeg
-# Converted: my_photos/img2.webp -> jpg_versions/img2.jpeg
-# ...
+# Converting images: 100%|████████████████| 15/15 [00:02<00:00, 7.32file/s]
+# 
+# Conversion complete: 15 succeeded, 0 failed
+```
+
+並列処理での高速変換:
+
+```bash
+python src/image_converter.py my_photos/ jpeg --parallel --output-dir jpg_versions/
+# 出力:
+# Found 15 image(s) to convert
+# Converting images: 100%|████████████████| 15/15 [00:00<00:00, 23.45file/s]
+# 
 # Conversion complete: 15 succeeded, 0 failed
 ```
 
@@ -249,7 +287,8 @@ python src/image_converter.py photo.jpg avif
 
 - [Pillow (PIL Fork)](https://python-pillow.org/) - The Python Imaging Library を使用して構築
 - [pillow-avif-plugin](https://github.com/fdintino/pillow-avif-plugin) - AVIFフォーマットサポート
-- [pytest](https://pytest.org/)でテスト
+- [tqdm](https://github.com/tqdm/tqdm) - プログレスバー表示
+- [pytest](https://pytest.org/) - テストフレームワーク
 
 ## 📞 連絡先
 
