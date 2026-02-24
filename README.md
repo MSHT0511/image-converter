@@ -1,6 +1,6 @@
 # Image Converter
 
-[![Test](https://github.com/YOUR_USERNAME/image-converter/workflows/Test/badge.svg)](https://github.com/YOUR_USERNAME/image-converter/actions)
+[![Test](https://github.com/MSHT0511/image-converter/workflows/Test/badge.svg)](https://github.com/MSHT0511/image-converter/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -257,4 +257,4 @@ python src/image_converter.py photo.jpg avif
 
 ---
 
-Made with ❤️ by [Your Name]
+Made with ❤️ by MSHT0511 
