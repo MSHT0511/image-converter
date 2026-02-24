@@ -166,6 +166,7 @@ python src/image_converter.py input/ webp -o output/ --no-confirm --no-recursive
   -w, --workers N       並列ワーカー数（デフォルト: CPUコア数、--parallelと併用）
   --no-confirm          既存ファイルを上書きする際の確認をスキップ
   --no-recursive        サブディレクトリを再帰的に処理しない
+  --lossless            WebP/AVIF形式でロスレス（可逆）圧縮を使用
 ```
 
 ## 🧪 テスト
@@ -250,14 +251,27 @@ python src/image_converter.py my_photos/ jpeg --parallel --output-dir jpg_versio
 python src/image_converter.py logo.png jpeg
 ```
 
-### 例4: アイコン（ICO）形式への変換
+### 例4: WebP/AVIFロスレス圧縮
+
+```bash
+# PNGをWebPのロスレス形式に変換（品質を損なわない）
+python src/image_converter.py input.png webp --lossless
+
+# PNGをAVIFのロスレス形式に変換
+python src/image_converter.py input.png avif --lossless
+
+# ディレクトリの画像を全てロスレスWebPに変換
+python src/image_converter.py images/ webp --lossless --parallel
+```
+
+### 例5: アイコン（ICO）形式への変換
 
 ```bash
 # PNGからICOへ（透過性を保持）
 python src/image_converter.py logo.png ico
 ```
 
-### 例5: 次世代フォーマット（AVIF）への変換
+### 例6: 次世代フォーマット（AVIF）への変換
 
 ```bash
 # JPEGからAVIFへ（高圧縮率）

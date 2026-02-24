@@ -1,15 +1,15 @@
 def _convert_single_file(args_tuple):
     """Wrapper function for parallel processing."""
-    img_file, output_format, rel_output_dir, no_confirm = args_tuple
+    img_file, output_format, rel_output_dir, no_confirm, lossless = args_tuple
     try:
-        success = process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False)
+        success = process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless)
         return (success, str(img_file))
     except Exception as e:
         print(f"Error processing {img_file}: {e}", file=sys.stderr)
         return (False, str(img_file))
 
 
-def _process_directory_parallel(input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files):
+def _process_directory_parallel(input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files, lossless=False):
     """Process directory with parallel execution."""
     actual_output_dir = output_dir if output_dir else input_dir / "converted"
     max_workers = workers or os.cpu_count()
@@ -22,7 +22,7 @@ def _process_directory_parallel(input_dir, output_format, output_dir, no_confirm
             rel_output_dir = actual_output_dir / rel_path
         else:
             rel_output_dir = actual_output_dir
-        tasks.append((img_file, output_format, rel_output_dir, no_confirm))
+        tasks.append((img_file, output_format, rel_output_dir, no_confirm, lossless))
     try:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_convert_single_file, task): task for task in tasks}
@@ -228,13 +228,14 @@ def validate_input_path(path: Path, max_size: int = 100_000_000) -> Path:
     return resolved_path
 
 
-def convert_image(input_path: Path, output_path: Path, output_format: str) -> bool:
+def convert_image(input_path: Path, output_path: Path, output_format: str, lossless: bool = False) -> bool:
     """Convert an image from one format to another.
 
     Args:
         input_path: Path to the input image file
         output_path: Path to the output image file
         output_format: Target format (e.g., 'JPEG', 'PNG', 'WEBP')
+        lossless: Use lossless compression for WebP (default: False)
 
     Returns:
         True if conversion was successful, False otherwise
@@ -264,7 +265,9 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
                 # WebPとAVIFの場合は最適化オプションを追加
                 if output_format in ['WEBP', 'AVIF']:
                     save_kwargs['optimize'] = True
-                    if output_format == 'WEBP':
+                    if lossless:
+                        save_kwargs['lossless'] = True
+                    elif output_format == 'WEBP':
                         save_kwargs['quality'] = 80
 
                 img.save(output_path, **save_kwargs)
@@ -279,7 +282,11 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
                 img = rgb_img
             # ICO/AVIFは透過性保持（PillowのICO/AVIFはRGBA対応）
             # それ以外は既存通り
-            img.save(output_path, format=output_format)
+            # WebP/AVIFのロスレス圧縮
+            if output_format in ['WEBP', 'AVIF'] and lossless:
+                img.save(output_path, format=output_format, lossless=True)
+            else:
+                img.save(output_path, format=output_format)
             return True
     except OSError as e:
         # File I/O errors, permission denied, disk full, etc.
@@ -300,7 +307,7 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
 
 
 def process_file(input_path: Path, output_format: str, output_dir: Optional[Path] = None,
-                no_confirm: bool = False, verbose: bool = True) -> bool:
+                no_confirm: bool = False, verbose: bool = True, lossless: bool = False) -> bool:
     """
     Process a single image file.
 
@@ -310,6 +317,7 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
         output_dir: Optional output directory
         no_confirm: Skip confirmation for overwriting existing files
         verbose: Print conversion messages (default: True)
+        lossless: Use lossless compression for WebP (default: False)
 
     Returns:
         True if processing was successful, False otherwise
@@ -349,7 +357,7 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
 
 def process_directory(input_dir: Path, output_format: str, output_dir: Optional[Path] = None,
                      no_confirm: bool = False, recursive: bool = True,
-                     parallel: bool = False, workers: Optional[int] = None) -> Tuple[int, int]:
+                     parallel: bool = False, workers: Optional[int] = None, lossless: bool = False) -> Tuple[int, int]:
     """Process all images in a directory.
 
     Args:
@@ -358,6 +366,7 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
         output_dir: Optional output directory
         no_confirm: Skip confirmation for overwriting existing files
         recursive: Process subdirectories recursively
+        lossless: Use lossless compression for WebP (default: False)
 
     Returns:
         Tuple of (successful_count, failed_count)
@@ -385,7 +394,7 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
 
     # 並列処理フラグで分岐
     if parallel:
-        return _process_directory_parallel(input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files)
+        return _process_directory_parallel(input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files, lossless=lossless)
 
     success_count = 0
     fail_count = 0
@@ -397,7 +406,7 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
             rel_output_dir = actual_output_dir / rel_path
         else:
             rel_output_dir = actual_output_dir
-        if process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False):
+        if process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless):
             success_count += 1
         else:
             fail_count += 1
@@ -472,6 +481,12 @@ Examples:
         help='Do not process subdirectories recursively (only for directory input)'
     )
 
+    parser.add_argument(
+        '--lossless',
+        action='store_true',
+        help='Use lossless compression for WebP/AVIF formats'
+    )
+
     return parser.parse_args(args)
 
 
@@ -507,7 +522,7 @@ def main() -> int:
 
     # Process file or directory
     if input_path.is_file():
-        success = process_file(input_path, output_format, output_dir, args.no_confirm)
+        success = process_file(input_path, output_format, output_dir, args.no_confirm, lossless=args.lossless)
         return 0 if success else 1
     elif input_path.is_dir():
         success_count, fail_count = process_directory(
@@ -517,7 +532,8 @@ def main() -> int:
             args.no_confirm,
             recursive=not args.no_recursive,
             parallel=args.parallel,
-            workers=args.workers
+            workers=args.workers,
+            lossless=args.lossless
         )
         print(f"\nConversion complete: {success_count} succeeded, {fail_count} failed")
         return 0 if fail_count == 0 else 1
