@@ -10,31 +10,74 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
-# AVIFサポート判定
-def check_avif_support() -> bool:
+
+# Custom Exception Classes
+class ImageConverterError(Exception):
+    """Base exception for image converter errors."""
+    pass
+
+
+class SecurityError(ImageConverterError):
+    """Exception raised for security-related issues."""
+    pass
+
+
+class ConversionError(ImageConverterError):
+    """Exception raised when image conversion fails."""
+    pass
+
+
+class UnsupportedFormatError(ConversionError):
+    """Exception raised for unsupported image formats."""
+    pass
+
+# AVIFサポート判定（遅延評価用）
+_avif_support_cached: Optional[bool] = None
+
+
+def _check_avif_support() -> bool:
     """Check if AVIF format is supported by Pillow."""
+    global _avif_support_cached
+    if _avif_support_cached is not None:
+        return _avif_support_cached
+
     try:
         from PIL import Image, features
         # PIL.features.check()でAVIFエンコーダーの有無を確認
         # pillow-avif-pluginがインストールされていれば自動的に統合される
-        return features.check('avif') or '.avif' in Image.registered_extensions()
+        _avif_support_cached = features.check('avif') or '.avif' in Image.registered_extensions()
     except Exception:
-        return False
+        _avif_support_cached = False
 
-AVIF_SUPPORTED = check_avif_support()
+    return _avif_support_cached
 
+
+# Pillowのインポート（ImportErrorは後でチェック）
 try:
     from PIL import Image
+    PILLOW_AVAILABLE = True
 except ImportError:
-    print("Error: Pillow is not installed. Install it with: pip install Pillow")
-    sys.exit(1)
+    PILLOW_AVAILABLE = False
+    Image = None  # type: ignore
 
 
 
-# サポート形式を動的生成
-def get_supported_formats():
+# サポート形式を動的生成（遅延評価用）
+_supported_formats_cached: Optional[Dict[str, str]] = None
+
+
+def get_supported_formats() -> Dict[str, str]:
+    """Get dictionary of supported file extensions and their PIL format names.
+
+    Returns:
+        Dict mapping file extensions (e.g., '.jpg') to PIL format names (e.g., 'JPEG')
+    """
+    global _supported_formats_cached
+    if _supported_formats_cached is not None:
+        return _supported_formats_cached
+
     fmts = {
         '.jpg': 'JPEG',
         '.jpeg': 'JPEG',
@@ -46,34 +89,94 @@ def get_supported_formats():
         '.webp': 'WEBP',
         '.ico': 'ICO',
     }
-    if AVIF_SUPPORTED:
+    if _check_avif_support():
         fmts['.avif'] = 'AVIF'
-    return fmts
 
-SUPPORTED_FORMATS = get_supported_formats()
+    _supported_formats_cached = fmts
+    return fmts
 
 
 def is_supported_format(file_path: Path) -> bool:
-    """Check if the file extension is supported."""
-    return file_path.suffix.lower() in SUPPORTED_FORMATS
+    """Check if the file extension is supported.
+
+    Args:
+        file_path: Path to the file to check
+
+    Returns:
+        True if the file extension is supported, False otherwise
+    """
+    return file_path.suffix.lower() in get_supported_formats()
 
 
 def get_output_path(input_path: Path, output_format: str, output_dir: Optional[Path] = None) -> Path:
-    """Generate the output file path."""
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        stem = input_path.stem
-        return output_dir / f"{stem}.{output_format.lower()}"
-    else:
-        # If no output directory is specified, create a "converted" folder in the same directory
-        default_output_dir = input_path.parent / "converted"
-        default_output_dir.mkdir(parents=True, exist_ok=True)
-        return default_output_dir / f"{input_path.stem}.{output_format.lower()}"
+    """Generate the output file path.
+
+    Args:
+        input_path: Path to the input image file
+        output_format: Target format (e.g., 'jpeg', 'png')
+        output_dir: Optional output directory
+
+    Returns:
+        Path object for the output file
+
+    Raises:
+        OSError: If directory creation fails
+    """
+    try:
+        if output_dir:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            stem = input_path.stem
+            return output_dir / f"{stem}.{output_format.lower()}"
+        else:
+            # If no output directory is specified, create a "converted" folder in the same directory
+            default_output_dir = input_path.parent / "converted"
+            default_output_dir.mkdir(parents=True, exist_ok=True)
+            return default_output_dir / f"{input_path.stem}.{output_format.lower()}"
+    except OSError as e:
+        raise OSError(f"Failed to create output directory: {e}") from e
+
+
+def validate_input_path(path: Path, max_size: int = 100_000_000) -> Path:
+    """Validate input path for security and size constraints.
+
+    Args:
+        path: Path to validate
+        max_size: Maximum file size in bytes (default: 100MB)
+
+    Returns:
+        Resolved absolute path
+
+    Raises:
+        SecurityError: If path validation fails
+        FileNotFoundError: If file doesn't exist
+    """
+    try:
+        # Resolve to absolute path and follow symlinks
+        resolved_path = path.resolve(strict=True)
+    except (OSError, RuntimeError) as e:
+        raise SecurityError(f"Invalid path or broken symlink: {path}") from e
+
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    # Check if it's a file (not a directory or special file)
+    if resolved_path.is_file():
+        # Check file size
+        try:
+            file_size = resolved_path.stat().st_size
+            if file_size > max_size:
+                raise SecurityError(
+                    f"File too large: {file_size / 1_000_000:.1f}MB "
+                    f"(max: {max_size / 1_000_000:.0f}MB)"
+                )
+        except OSError as e:
+            raise SecurityError(f"Cannot access file: {e}") from e
+
+    return resolved_path
 
 
 def convert_image(input_path: Path, output_path: Path, output_format: str) -> bool:
-    """
-    Convert an image from one format to another.
+    """Convert an image from one format to another.
 
     Args:
         input_path: Path to the input image file
@@ -82,12 +185,15 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
 
     Returns:
         True if conversion was successful, False otherwise
+
+    Raises:
+        ConversionError: If conversion fails with specific error details
     """
     try:
         with Image.open(input_path) as img:
             # アニメーションをサポートする形式
             animation_formats = ['WEBP', 'GIF']
-            if AVIF_SUPPORTED:
+            if _check_avif_support():
                 animation_formats.append('AVIF')
 
             # アニメーション画像かチェック
@@ -122,8 +228,21 @@ def convert_image(input_path: Path, output_path: Path, output_format: str) -> bo
             # それ以外は既存通り
             img.save(output_path, format=output_format)
             return True
+    except OSError as e:
+        # File I/O errors, permission denied, disk full, etc.
+        print(f"Error: File operation failed for {input_path}: {e}", file=sys.stderr)
+        return False
+    except MemoryError as e:
+        # Out of memory (very large images)
+        print(f"Error: Insufficient memory to process {input_path}: {e}", file=sys.stderr)
+        return False
+    except ValueError as e:
+        # Invalid image data or format issues
+        print(f"Error: Invalid image format in {input_path}: {e}", file=sys.stderr)
+        return False
     except Exception as e:
-        print(f"Error converting {input_path}: {e}", file=sys.stderr)
+        # Catch-all for unexpected errors
+        print(f"Error: Unexpected error converting {input_path}: {type(e).__name__}: {e}", file=sys.stderr)
         return False
 
 
@@ -174,9 +293,8 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
 
 
 def process_directory(input_dir: Path, output_format: str, output_dir: Optional[Path] = None,
-                     no_confirm: bool = False, recursive: bool = True) -> tuple[int, int]:
-    """
-    Process all images in a directory.
+                     no_confirm: bool = False, recursive: bool = True) -> Tuple[int, int]:
+    """Process all images in a directory.
 
     Args:
         input_dir: Path to the input directory
@@ -196,7 +314,8 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
     image_files_set = set()
     pattern = '**/*' if recursive else '*'
 
-    for ext in SUPPORTED_FORMATS.keys():
+    supported_formats = get_supported_formats()
+    for ext in supported_formats.keys():
         image_files_set.update(input_dir.glob(f"{pattern}{ext}"))
         image_files_set.update(input_dir.glob(f"{pattern}{ext.upper()}"))
 
@@ -231,8 +350,15 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
     return success_count, fail_count
 
 
-def parse_args():
-    """Parse command-line arguments."""
+def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
+    """Parse command-line arguments.
+
+    Args:
+        args: Optional list of arguments (defaults to sys.argv)
+
+    Returns:
+        Parsed arguments namespace
+    """
     parser = argparse.ArgumentParser(
         description="Convert images between common formats (JPEG, PNG, BMP, GIF, TIFF, WebP)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -253,7 +379,7 @@ Examples:
 
     # サポート形式を動的にchoicesへ
     choices = ['jpeg', 'jpg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp', 'ico']
-    if AVIF_SUPPORTED:
+    if _check_avif_support():
         choices.append('avif')
     parser.add_argument(
         'format',
@@ -280,20 +406,38 @@ Examples:
         help='Do not process subdirectories recursively (only for directory input)'
     )
 
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
-def main():
-    """Main entry point for the CLI tool."""
+def main() -> int:
+    """Main entry point for the CLI tool.
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    # Check if Pillow is available
+    if not PILLOW_AVAILABLE:
+        print("Error: Pillow is not installed. Install it with: pip install Pillow", file=sys.stderr)
+        return 1
+
     args = parse_args()
 
     input_path = Path(args.input)
     output_format = args.format.lower()
     output_dir = Path(args.output_dir) if args.output_dir else None
 
+    # Validate input path exists
     if not input_path.exists():
         print(f"Error: Path not found: {input_path}", file=sys.stderr)
         return 1
+
+    # Validate input path for security (only for files)
+    if input_path.is_file():
+        try:
+            input_path = validate_input_path(input_path)
+        except (SecurityError, FileNotFoundError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
 
     # Process file or directory
     if input_path.is_file():

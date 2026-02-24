@@ -17,7 +17,7 @@ from image_converter import (
     convert_image,
     process_file,
     process_directory,
-    SUPPORTED_FORMATS
+    get_supported_formats
 )
 
 
@@ -87,7 +87,7 @@ class TestFormatValidation:
 
     def test_is_supported_format_valid(self):
         """Test that supported formats are recognized."""
-        for ext in SUPPORTED_FORMATS.keys():
+        for ext in get_supported_formats().keys():
             assert is_supported_format(Path(f'test{ext}'))
             assert is_supported_format(Path(f'test{ext.upper()}'))
 
@@ -129,7 +129,7 @@ class TestImageConversion:
             # ICOは透過性を保持
             assert img.mode in ('RGBA', 'RGB', 'P')
 
-    @pytest.mark.skipif('AVIF' not in SUPPORTED_FORMATS.values(), reason='AVIF not supported')
+    @pytest.mark.skipif('AVIF' not in get_supported_formats().values(), reason='AVIF not supported')
     def test_convert_png_to_avif(self, sample_images, temp_dir):
         """Test PNG to AVIF conversion (transparency preserved)."""
         input_path = sample_images['png_alpha']
