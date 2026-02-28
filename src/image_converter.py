@@ -410,6 +410,7 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
         return 0, 0, 0
 
     # Find all supported image files
+    print("Scanning for image files...", flush=True)
     image_files_set = set()
     pattern = '**/*' if recursive else '*'
 
@@ -570,6 +571,7 @@ def _process_directory_parallel(
 
     # Check for existing files before parallel processing
     if not no_confirm:
+        print("Checking for existing files...", flush=True)
         existing_files = _check_existing_files(image_files, output_format, input_dir, output_dir, recursive)
         if existing_files:
             policy = _prompt_overwrite_policy(existing_files)
@@ -590,30 +592,54 @@ def _process_directory_parallel(
         rel_output_dir = _resolve_output_dir(img_file, input_dir, output_dir, recursive)
         tasks.append((img_file, output_format, rel_output_dir, no_confirm, lossless, False))
 
+    pbar = None
+    executor = None
+    futures = {}
+
     try:
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_convert_single_file, task): task for task in tasks}
-            with tqdm(total=len(futures), desc="Converting images", unit="file") as pbar:
-                for future in as_completed(futures):
-                    try:
-                        success, img_file, skipped = future.result()
-                        if success:
-                            success_count += 1
-                        elif skipped:
-                            skip_count += 1
-                        else:
-                            fail_count += 1
-                    except Exception as e:
-                        logger.error(f"Error in worker: {e}")
-                        fail_count += 1
-                    pbar.update(1)
+        executor = ProcessPoolExecutor(max_workers=max_workers)
+        futures = {executor.submit(_convert_single_file, task): task for task in tasks}
+        pbar = tqdm(total=len(futures), desc="Converting images", unit="file")
+
+        for future in as_completed(futures):
+            try:
+                success, img_file, skipped = future.result()
+                if success:
+                    success_count += 1
+                elif skipped:
+                    skip_count += 1
+                else:
+                    fail_count += 1
+            except Exception as e:
+                logger.error(f"Error in worker: {e}")
+                fail_count += 1
+            pbar.update(1)
     except KeyboardInterrupt:
-        logger.warning("Interrupted by user. Cancelling remaining tasks...")
-        # tqdmバーを閉じる
-        try:
+        logger.warning("Canceling...")
+
+        # Cancel all pending futures
+        for future in futures:
+            future.cancel()
+
+        # Shutdown executor immediately without waiting
+        if executor:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        # Clean up progress bar
+        if pbar:
             pbar.close()
-        except Exception:
-            pass
+
+        print("\nCanceled.")
+        return success_count, fail_count, skip_count
+    finally:
+        # Clean up progress bar
+        if pbar:
+            pbar.close()
+
+        # Ensure executor is properly closed
+        if executor:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     return success_count, fail_count, skip_count
 
 
