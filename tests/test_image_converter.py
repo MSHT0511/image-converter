@@ -24,7 +24,10 @@ from image_converter import (
     SecurityError,
     ConversionError,
     UnsupportedFormatError,
-    validate_input_path
+    validate_input_path,
+    _check_existing_files,
+    _prompt_overwrite_policy,
+    _resolve_output_dir
 )
 
 
@@ -194,7 +197,7 @@ class TestParallelProcessing:
         for i in range(5):
             img = Image.new('RGB', (50, 50), color='blue')
             img.save(temp_dir / f'img_{i}.png', 'PNG')
-        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
         assert success >= 5
         assert fail == 0
 
@@ -202,7 +205,7 @@ class TestParallelProcessing:
         for i in range(3):
             img = Image.new('RGB', (30, 30), color='green')
             img.save(temp_dir / f'g_{i}.png', 'PNG')
-        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, False, None)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, False, None)
         assert success >= 3
         assert fail == 0
 
@@ -211,7 +214,7 @@ class TestParallelProcessing:
             img = Image.new('RGB', (40, 40), color='yellow')
             img.save(temp_dir / f'y_{i}.png', 'PNG')
         # workers=1(シングルプロセス)
-        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, 1)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 1)
         assert success >= 4
         assert fail == 0
 
@@ -221,7 +224,7 @@ class TestParallelProcessing:
         img.save(temp_dir / 'ok.png', 'PNG')
         with open(temp_dir / 'broken.png', 'wb') as f:
             f.write(b'not an image')
-        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
         assert success >= 1
         assert fail >= 1
 
@@ -247,7 +250,7 @@ class TestParallelProcessing:
             img.save(temp_dir / f'm_{i}.png', 'PNG')
         # workers=0またはNoneはデフォルト（CPU数）を使用すべき
         # 注: ProcessPoolExecutorは負の値を受け付けないため、そのテストはスキップ
-        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, None)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, None)
         assert success >= 2
         assert fail == 0
 
@@ -257,9 +260,103 @@ class TestParallelProcessing:
             img = Image.new('RGB', (40, 40), color='brown')
             img.save(temp_dir / f'b_{i}.png', 'PNG')
         # workers=Noneはデフォルト（CPU数）を使う
-        success, fail = process_directory(temp_dir, 'jpeg', None, True, True, True, None)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, None)
         assert success >= 2
         assert fail == 0
+
+    def test_parallel_with_existing_files_overwrite_all(self, temp_dir):
+        """並列処理で既存ファイルがある場合、'all'選択で上書きされることをテスト"""
+        # Create source images
+        for i in range(3):
+            img = Image.new('RGB', (50, 50), color='blue')
+            img.save(temp_dir / f'img_{i}.png', 'PNG')
+
+        # Pre-create some output files
+        converted_dir = temp_dir / 'converted'
+        converted_dir.mkdir()
+        img = Image.new('RGB', (50, 50), color='red')
+        img.save(converted_dir / 'img_0.jpeg', 'JPEG')
+        img.save(converted_dir / 'img_1.jpeg', 'JPEG')
+        original_mtime = (converted_dir / 'img_0.jpeg').stat().st_mtime
+
+        # Mock user input to select 'all' (overwrite all)
+        with patch('builtins.input', return_value='a'):
+            success, fail, skip = process_directory(temp_dir, 'jpeg', None, False, True, True, 2)
+
+        # All files should be processed
+        assert success == 3
+        assert fail == 0
+        assert skip == 0
+        # Verify files were actually overwritten (mtime changed)
+        assert (converted_dir / 'img_0.jpeg').stat().st_mtime >= original_mtime
+
+    def test_parallel_with_existing_files_skip(self, temp_dir):
+        """並列処理で既存ファイルがある場合、'skip'選択でスキップされることをテスト"""
+        # Create source images
+        for i in range(4):
+            img = Image.new('RGB', (50, 50), color='green')
+            img.save(temp_dir / f'file_{i}.png', 'PNG')
+
+        # Pre-create some output files
+        converted_dir = temp_dir / 'converted'
+        converted_dir.mkdir()
+        img = Image.new('RGB', (50, 50), color='yellow')
+        img.save(converted_dir / 'file_0.webp', 'WEBP')
+        img.save(converted_dir / 'file_2.webp', 'WEBP')
+
+        # Mock user input to select 'skip'
+        with patch('builtins.input', return_value='s'):
+            success, fail, skip = process_directory(temp_dir, 'webp', None, False, True, True, 2)
+
+        # Only files without existing outputs should be processed
+        assert success == 2  # file_1 and file_3
+        assert fail == 0
+        assert skip == 2  # file_0 and file_2
+
+    def test_parallel_with_existing_files_cancel(self, temp_dir):
+        """並列処理で'cancel'選択時に処理が中断されることをテスト"""
+        # Create source images
+        for i in range(3):
+            img = Image.new('RGB', (50, 50), color='purple')
+            img.save(temp_dir / f'test_{i}.png', 'PNG')
+
+        # Pre-create one output file
+        converted_dir = temp_dir / 'converted'
+        converted_dir.mkdir()
+        img = Image.new('RGB', (50, 50), color='orange')
+        img.save(converted_dir / 'test_0.bmp', 'BMP')
+
+        # Mock user input to select 'cancel'
+        with patch('builtins.input', return_value='c'):
+            success, fail, skip = process_directory(temp_dir, 'bmp', None, False, True, True, 2)
+
+        # No files should be processed
+        assert success == 0
+        assert fail == 0
+        assert skip == 0
+
+    def test_parallel_no_confirm_with_existing_files(self, temp_dir):
+        """並列処理で--no-confirmフラグ使用時、確認なしで上書きされることをテスト"""
+        # Create source images
+        for i in range(3):
+            img = Image.new('RGB', (50, 50), color='cyan')
+            img.save(temp_dir / f'item_{i}.png', 'PNG')
+
+        # Pre-create output files
+        converted_dir = temp_dir / 'converted'
+        converted_dir.mkdir()
+        for i in range(3):
+            img = Image.new('RGB', (50, 50), color='magenta')
+            img.save(converted_dir / f'item_{i}.jpeg', 'JPEG')
+
+        # Process with no_confirm=True (should not prompt)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
+
+        # All files should be processed without prompting
+        assert success == 3
+        assert fail == 0
+        assert skip == 0
+
 
 
 @pytest.fixture
@@ -670,9 +767,9 @@ class TestProcessFile:
     def test_process_file_success(self, sample_images, temp_dir):
         """成功するファイル処理をテスト"""
         input_path = sample_images['png']
-        result = process_file(input_path, 'jpeg', no_confirm=True)
+        success, skipped = process_file(input_path, 'jpeg', no_confirm=True)
 
-        assert result
+        assert success and not skipped
         output_path = temp_dir / 'converted' / 'test.jpeg'
         assert output_path.exists()
 
@@ -681,33 +778,33 @@ class TestProcessFile:
         input_path = sample_images['png']
         output_dir = temp_dir / 'converted'
 
-        result = process_file(input_path, 'webp', output_dir, no_confirm=True)
+        success, skipped = process_file(input_path, 'webp', output_dir, no_confirm=True)
 
-        assert result
+        assert success and not skipped
         assert (output_dir / 'test.webp').exists()
 
     def test_process_file_nonexistent(self, temp_dir):
         """存在しないファイルの処理をテスト"""
         input_path = temp_dir / 'nonexistent.png'
-        result = process_file(input_path, 'jpeg', no_confirm=True)
+        success, skipped = process_file(input_path, 'jpeg', no_confirm=True)
 
-        assert not result
+        assert not success and not skipped
 
     def test_process_file_unsupported_format(self, temp_dir):
         """サポートされていない形式のファイル処理をテスト"""
         input_path = temp_dir / 'test.txt'
         input_path.write_text('not an image')
 
-        result = process_file(input_path, 'jpeg', no_confirm=True)
+        success, skipped = process_file(input_path, 'jpeg', no_confirm=True)
 
-        assert not result
+        assert not success and not skipped
 
     def test_process_file_verbose_true(self, sample_images, temp_dir, capsys):
         """verbose=Trueが変換メッセージを表示することをテスト"""
         input_path = sample_images['png']
-        result = process_file(input_path, 'jpeg', no_confirm=True, verbose=True)
+        success, skipped = process_file(input_path, 'jpeg', no_confirm=True, verbose=True)
 
-        assert result
+        assert success and not skipped
 
         # 標準出力をキャプチャして"Converted:"メッセージがあることを確認
         captured = capsys.readouterr()
@@ -717,9 +814,9 @@ class TestProcessFile:
     def test_process_file_verbose_false(self, sample_images, temp_dir, capsys):
         """verbose=Falseが変換メッセージを抑制することをテスト"""
         input_path = sample_images['png']
-        result = process_file(input_path, 'webp', no_confirm=True, verbose=False)
+        success, skipped = process_file(input_path, 'webp', no_confirm=True, verbose=False)
 
-        assert result
+        assert success and not skipped
         output_path = temp_dir / 'converted' / 'test.webp'
         assert output_path.exists()
 
@@ -731,9 +828,9 @@ class TestProcessFile:
         """デフォルト動作がverbose=Trueであることをテスト"""
         input_path = sample_images['png']
         # verboseパラメータを省略（デフォルト動作）
-        result = process_file(input_path, 'bmp', no_confirm=True)
+        success, skipped = process_file(input_path, 'bmp', no_confirm=True)
 
-        assert result
+        assert success and not skipped
 
         # デフォルトでverbose出力があることを確認
         captured = capsys.readouterr()
@@ -748,8 +845,8 @@ class TestProcessFile:
         subdir = temp_dir / 'subdir'
         subdir.mkdir()
 
-        result = process_file(subdir, 'jpeg', no_confirm=True)
-        assert not result
+        success, skipped = process_file(subdir, 'jpeg', no_confirm=True)
+        assert not success and not skipped
 
     def test_process_file_with_permission_denied(self, temp_dir, capsys):
         """Test handling of permission denied errors."""
@@ -760,22 +857,22 @@ class TestProcessFile:
         # Mock is_file() to return True but convert_image to fail with permissions
         with patch('pathlib.Path.is_file', return_value=True):
             with patch('image_converter.convert_image', return_value=False):
-                result = process_file(input_path, 'jpeg', no_confirm=True)
-                assert not result
+                success, skipped = process_file(input_path, 'jpeg', no_confirm=True)
+                assert not success and not skipped
 
     def test_process_file_invalid_output_format(self, sample_images, temp_dir):
         """正規化が必要な形式での処理をテスト（jpg -> JPEG）"""
         input_path = sample_images['png']
         # jpgは内部でJPEGに正規化されるはず
-        result = process_file(input_path, 'jpg', no_confirm=True)
-        assert result
+        success, skipped = process_file(input_path, 'jpg', no_confirm=True)
+        assert success and not skipped
 
     def test_process_file_tif_format_normalization(self, sample_images, temp_dir):
         """'tif'が'TIFF'に正規化されることをテスト"""
         input_path = sample_images['png']
         output_dir = temp_dir / 'output'
-        result = process_file(input_path, 'tif', output_dir, no_confirm=True)
-        assert result
+        success, skipped = process_file(input_path, 'tif', output_dir, no_confirm=True)
+        assert success and not skipped
         assert (output_dir / 'test.tif').exists()
 
     # ========================================
@@ -794,8 +891,8 @@ class TestProcessFile:
 
         # Second conversion with mock user input 'y'
         with patch('builtins.input', return_value='y'):
-            result = process_file(input_path, 'jpeg', no_confirm=False)
-            assert result
+            success, skipped = process_file(input_path, 'jpeg', no_confirm=False)
+            assert success and not skipped
 
     def test_process_file_overwrite_with_confirmation_no(self, sample_images, temp_dir, capsys):
         """Test skipping overwrite with user confirmation (no)."""
@@ -810,8 +907,8 @@ class TestProcessFile:
 
         # Second conversion with mock user input 'n'
         with patch('builtins.input', return_value='n'):
-            result = process_file(input_path, 'jpeg', no_confirm=False)
-            assert not result
+            success, skipped = process_file(input_path, 'jpeg', no_confirm=False)
+            assert not success and skipped
 
         # Verify output contains "Skipped"
         captured = capsys.readouterr()
@@ -828,9 +925,46 @@ class TestProcessFile:
         assert output_path.exists()
 
         # Second conversion should overwrite without prompting
-        result = process_file(input_path, 'jpeg', no_confirm=True)
-        assert result
+        success, skipped = process_file(input_path, 'jpeg', no_confirm=True)
+        assert success and not skipped
         assert output_path.exists()
+
+    def test_process_file_skip_existing_true(self, sample_images, temp_dir):
+        """skip_existing=Trueで既存ファイルをスキップすることをテスト"""
+        input_path = sample_images['png']
+        output_dir = temp_dir / 'converted'
+
+        # First conversion
+        success1, skipped1 = process_file(input_path, 'jpeg', output_dir, no_confirm=True)
+        assert success1 and not skipped1
+        output_path = output_dir / 'test.jpeg'
+        assert output_path.exists()
+        original_mtime = output_path.stat().st_mtime
+
+        # Second conversion with skip_existing=True
+        success2, skipped2 = process_file(input_path, 'jpeg', output_dir, no_confirm=True, skip_existing=True)
+        assert not success2 and skipped2
+
+        # File should not be modified
+        assert output_path.stat().st_mtime == original_mtime
+
+    def test_process_file_skip_existing_verbose(self, sample_images, temp_dir, capsys):
+        """skip_existingでスキップメッセージが表示されることをテスト"""
+        input_path = sample_images['png']
+        output_dir = temp_dir / 'converted'
+
+        # First conversion
+        process_file(input_path, 'jpeg', output_dir, no_confirm=True, verbose=False)
+        output_path = output_dir / 'test.jpeg'
+        assert output_path.exists()
+
+        # Second conversion with skip_existing=True and verbose=True
+        success, skipped = process_file(input_path, 'jpeg', output_dir, no_confirm=True, skip_existing=True, verbose=True)
+        assert not success and skipped
+
+        # Verify output contains "Skipped (already exists)"
+        captured = capsys.readouterr()
+        assert "Skipped (already exists)" in captured.out
 
 
 class TestProcessDirectory:
@@ -840,7 +974,7 @@ class TestProcessDirectory:
         """再帰的なディレクトリ処理をテスト"""
         input_dir, image_files = sample_directory
 
-        success, fail = process_directory(input_dir, 'jpeg', no_confirm=True, recursive=True)
+        success, fail, skip = process_directory(input_dir, 'jpeg', no_confirm=True, recursive=True)
 
         assert success == 3  # す3つの画像が変換されるはず
         assert fail == 0
@@ -854,7 +988,7 @@ class TestProcessDirectory:
         """非再帰的なディレクトリ処理をテスト"""
         input_dir, image_files = sample_directory
 
-        success, fail = process_directory(input_dir, 'webp', no_confirm=True, recursive=False)
+        success, fail, skip = process_directory(input_dir, 'webp', no_confirm=True, recursive=False)
 
         # ルートディレクトリの画像のみ変換されるはず
         assert success == 1
@@ -866,7 +1000,7 @@ class TestProcessDirectory:
         input_dir, image_files = sample_directory
         output_dir = temp_dir / 'output'
 
-        success, fail = process_directory(input_dir, 'bmp', output_dir, no_confirm=True, recursive=True)
+        success, fail, skip = process_directory(input_dir, 'bmp', output_dir, no_confirm=True, recursive=True)
 
         assert success == 3
         assert (output_dir / 'image0.bmp').exists()
@@ -878,7 +1012,7 @@ class TestProcessDirectory:
         empty_dir = temp_dir / 'empty'
         empty_dir.mkdir()
 
-        success, fail = process_directory(empty_dir, 'jpeg', no_confirm=True)
+        success, fail, skip = process_directory(empty_dir, 'jpeg', no_confirm=True)
 
         assert success == 0
         assert fail == 0
@@ -887,7 +1021,7 @@ class TestProcessDirectory:
         """存在しないディレクトリの処理をテスト"""
         nonexistent_dir = temp_dir / 'nonexistent'
 
-        success, fail = process_directory(nonexistent_dir, 'jpeg', no_confirm=True)
+        success, fail, skip = process_directory(nonexistent_dir, 'jpeg', no_confirm=True)
 
         assert success == 0
         assert fail == 0
@@ -908,7 +1042,7 @@ class TestProcessDirectory:
         # Mock glob to raise PermissionError
         with patch.object(Path, 'glob', side_effect=PermissionError("Access denied")):
             try:
-                success, fail = process_directory(test_dir, 'jpeg', no_confirm=True)
+                success, fail, skip = process_directory(test_dir, 'jpeg', no_confirm=True)
                 # 適切に処理されるはず
             except PermissionError:
                 # 例外が発生した場合、テストはパス（エラーが伝播される）
@@ -925,7 +1059,7 @@ class TestProcessDirectory:
         (temp_dir / 'readme.txt').write_text('Not an image')
         (temp_dir / 'data.json').write_text('{}')
 
-        success, fail = process_directory(temp_dir, 'webp', no_confirm=True)
+        success, fail, skip = process_directory(temp_dir, 'webp', no_confirm=True)
 
         # Only image files should be processed
         assert success == 2
@@ -937,10 +1071,76 @@ class TestProcessDirectory:
         img.save(temp_dir / 'lower.png', 'PNG')
         img.save(temp_dir / 'UPPER.PNG', 'PNG')
 
-        success, fail = process_directory(temp_dir, 'jpeg', no_confirm=True)
+        success, fail, skip = process_directory(temp_dir, 'jpeg', no_confirm=True)
 
         # Both files should be processed
         assert success == 2
+        assert fail == 0
+
+    def test_process_directory_excludes_converted_folder(self, temp_dir):
+        """converted/フォルダ内のファイルが変換対象から除外されることをテスト"""
+        # Create original image
+        img = Image.new('RGB', (50, 50), color='blue')
+        original = temp_dir / 'original.png'
+        img.save(original, 'PNG')
+
+        # Create already converted file in converted folder
+        converted_dir = temp_dir / 'converted'
+        converted_dir.mkdir()
+        already_converted = converted_dir / 'already.webp'
+        img.save(already_converted, 'WEBP')
+
+        # Process directory
+        success, fail, skip = process_directory(temp_dir, 'webp', no_confirm=True)
+
+        # Only the original file should be processed, not the one in converted/
+        assert success == 1
+        assert fail == 0
+        # The already.webp should not be re-processed
+        assert (converted_dir / 'original.webp').exists()
+
+    def test_process_directory_excludes_custom_output_dir(self, temp_dir):
+        """カスタム出力ディレクトリ内のファイルも除外されることをテスト"""
+        # Create original image
+        img = Image.new('RGB', (50, 50), color='green')
+        original = temp_dir / 'source.png'
+        img.save(original, 'PNG')
+
+        # Create custom output directory with existing file
+        output_dir = temp_dir / 'output'
+        output_dir.mkdir()
+        existing = output_dir / 'existing.jpeg'
+        img.save(existing, 'JPEG')
+
+        # Process directory with custom output dir
+        success, fail, skip = process_directory(temp_dir, 'jpeg', output_dir, no_confirm=True)
+
+        # Only source.png should be processed, not existing.jpeg
+        assert success == 1
+        assert fail == 0
+        assert (output_dir / 'source.jpeg').exists()
+
+    def test_skip_count_accuracy(self, temp_dir):
+        """スキップカウントが正確にカウントされることをテスト"""
+        # Create 5 image files
+        for i in range(5):
+            img = Image.new('RGB', (50, 50), color='blue')
+            img.save(temp_dir / f'image{i}.png', 'PNG')
+
+        # Pre-create 2 output files
+        converted_dir = temp_dir / 'converted'
+        converted_dir.mkdir()
+        img = Image.new('RGB', (50, 50), color='red')
+        img.save(converted_dir / 'image0.jpeg', 'JPEG')
+        img.save(converted_dir / 'image1.jpeg', 'JPEG')
+
+        # Process with mock user response 'n' for skip
+        with patch('builtins.input', return_value='n'):
+            success, fail, skip = process_directory(temp_dir, 'jpeg', no_confirm=False)
+
+        # Should skip 2 files (the ones that exist)
+        assert skip == 2
+        assert success == 3
         assert fail == 0
 
 
@@ -968,3 +1168,156 @@ class TestIntegration:
             output_path = temp_dir / f'test_{fmt}.jpg'
             format_upper = 'JPEG' if fmt.upper() in ['JPEG', 'JPG'] else fmt.upper()
             assert convert_image(input_path, output_path, format_upper)
+
+
+class TestExistingFilesCheck:
+    """_check_existing_files関数のテスト"""
+
+    def test_check_existing_files_with_existing(self, temp_dir):
+        """既存ファイルを正しく検出することをテスト"""
+        # Create input files
+        img = Image.new('RGB', (50, 50), color='blue')
+        img.save(temp_dir / 'file1.png', 'PNG')
+        img.save(temp_dir / 'file2.png', 'PNG')
+        img.save(temp_dir / 'file3.png', 'PNG')
+
+        # Create existing output files
+        output_dir = temp_dir / 'converted'
+        output_dir.mkdir()
+        img.save(output_dir / 'file1.jpeg', 'JPEG')
+        img.save(output_dir / 'file2.jpeg', 'JPEG')
+
+        # Check which files have existing outputs
+        image_files = [temp_dir / 'file1.png', temp_dir / 'file2.png', temp_dir / 'file3.png']
+        existing = _check_existing_files(image_files, 'jpeg', temp_dir, None, False)
+
+        # file1 and file2 should be in the existing list
+        assert len(existing) == 2
+        assert temp_dir / 'file1.png' in existing
+        assert temp_dir / 'file2.png' in existing
+        assert temp_dir / 'file3.png' not in existing
+
+    def test_check_existing_files_empty(self, temp_dir):
+        """既存ファイルがない場合に空リストを返すことをテスト"""
+        # Create only input files
+        img = Image.new('RGB', (50, 50), color='green')
+        img.save(temp_dir / 'new1.png', 'PNG')
+        img.save(temp_dir / 'new2.png', 'PNG')
+
+        # Check for existing files
+        image_files = [temp_dir / 'new1.png', temp_dir / 'new2.png']
+        existing = _check_existing_files(image_files, 'webp', temp_dir, None, False)
+
+        # No existing files
+        assert len(existing) == 0
+        assert existing == []
+
+    def test_check_existing_files_recursive(self, temp_dir):
+        """再帰モードで正しくチェックすることをテスト"""
+        # Create directory structure
+        subdir = temp_dir / 'subdir'
+        subdir.mkdir()
+
+        img = Image.new('RGB', (50, 50), color='red')
+        img.save(temp_dir / 'root.png', 'PNG')
+        img.save(subdir / 'sub.png', 'PNG')
+
+        # Create existing output in proper structure
+        output_dir = temp_dir / 'converted'
+        output_subdir = output_dir / 'subdir'
+        output_subdir.mkdir(parents=True)
+        img.save(output_subdir / 'sub.jpeg', 'JPEG')
+
+        # Check with recursive mode
+        image_files = [temp_dir / 'root.png', subdir / 'sub.png']
+        existing = _check_existing_files(image_files, 'jpeg', temp_dir, None, True)
+
+        # Only sub.png should have existing output in the recursive structure
+        assert len(existing) == 1
+        assert subdir / 'sub.png' in existing
+
+
+class TestOverwritePolicy:
+    """_prompt_overwrite_policy関数のテスト"""
+
+    def test_prompt_overwrite_policy_all(self, temp_dir):
+        """'a'入力で'all'を返すことをテスト"""
+        existing_files = [temp_dir / 'file1.png', temp_dir / 'file2.png']
+
+        with patch('builtins.input', return_value='a'):
+            result = _prompt_overwrite_policy(existing_files)
+
+        assert result == 'all'
+
+    def test_prompt_overwrite_policy_skip(self, temp_dir):
+        """'s'入力で'skip'を返すことをテスト"""
+        existing_files = [temp_dir / 'file1.png']
+
+        with patch('builtins.input', return_value='s'):
+            result = _prompt_overwrite_policy(existing_files)
+
+        assert result == 'skip'
+
+    def test_prompt_overwrite_policy_cancel(self, temp_dir):
+        """'c'入力で'cancel'を返すことをテスト"""
+        existing_files = [temp_dir / 'file1.png', temp_dir / 'file2.png', temp_dir / 'file3.png']
+
+        with patch('builtins.input', return_value='c'):
+            result = _prompt_overwrite_policy(existing_files)
+
+        assert result == 'cancel'
+
+    def test_prompt_overwrite_policy_aliases(self, temp_dir):
+        """'all', 'skip', 'cancel'のフルワード入力が受け付けられることをテスト"""
+        existing_files = [temp_dir / 'file.png']
+
+        # Test 'all' alias
+        with patch('builtins.input', return_value='all'):
+            result = _prompt_overwrite_policy(existing_files)
+            assert result == 'all'
+
+        # Test 'skip' alias
+        with patch('builtins.input', return_value='skip'):
+            result = _prompt_overwrite_policy(existing_files)
+            assert result == 'skip'
+
+        # Test 'cancel' alias
+        with patch('builtins.input', return_value='cancel'):
+            result = _prompt_overwrite_policy(existing_files)
+            assert result == 'cancel'
+
+    def test_prompt_overwrite_policy_invalid_then_valid(self, temp_dir):
+        """無効な入力後に有効な入力で再試行することをテスト"""
+        existing_files = [temp_dir / 'file.png']
+
+        # Mock input to return invalid inputs first, then valid
+        inputs = iter(['x', 'invalid', '123', 'a'])
+        with patch('builtins.input', side_effect=inputs):
+            result = _prompt_overwrite_policy(existing_files)
+
+        assert result == 'all'
+
+    def test_prompt_overwrite_policy_displays_file_list(self, temp_dir, capsys):
+        """既存ファイルのリストが表示されることをテスト"""
+        existing_files = [temp_dir / 'file1.png', temp_dir / 'file2.png']
+
+        with patch('builtins.input', return_value='a'):
+            _prompt_overwrite_policy(existing_files)
+
+        captured = capsys.readouterr()
+        assert "Found 2 file(s) that already exist" in captured.out
+        assert "file1.png" in captured.out
+        assert "file2.png" in captured.out
+
+    def test_prompt_overwrite_policy_truncates_long_list(self, temp_dir, capsys):
+        """ファイルリストが長い場合に切り詰められることをテスト"""
+        # Create list with more than 5 files
+        existing_files = [temp_dir / f'file{i}.png' for i in range(10)]
+
+        with patch('builtins.input', return_value='s'):
+            _prompt_overwrite_policy(existing_files)
+
+        captured = capsys.readouterr()
+        assert "Found 10 file(s) that already exist" in captured.out
+        assert "First 5" in captured.out
+        assert "and 5 more" in captured.out
