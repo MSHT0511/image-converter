@@ -335,7 +335,8 @@ def convert_image(input_path: Path, output_path: Path, output_format: str, lossl
 
 
 def process_file(input_path: Path, output_format: str, output_dir: Optional[Path] = None,
-                no_confirm: bool = False, verbose: bool = True, lossless: bool = False) -> bool:
+                no_confirm: bool = False, verbose: bool = True, lossless: bool = False,
+                skip_existing: bool = False) -> Tuple[bool, bool]:
     """
     Process a single image file.
 
@@ -346,17 +347,21 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
         no_confirm: Skip confirmation for overwriting existing files
         verbose: Print conversion messages (default: True)
         lossless: Use lossless compression for WebP (default: False)
+        skip_existing: Skip if output file already exists (default: False)
 
     Returns:
-        True if processing was successful, False otherwise
+        Tuple of (success: bool, skipped: bool)
+        - (True, False): Successfully converted
+        - (False, False): Failed to convert
+        - (False, True): Skipped (file already exists)
     """
     if not input_path.is_file():
         logger.error(f"File not found: {input_path}")
-        return False
+        return False, False
 
     if not is_supported_format(input_path):
         logger.error(f"Unsupported file format: {input_path.suffix}")
-        return False
+        return False, False
 
     # Get the PIL format name
     format_upper = _normalize_format(output_format)
@@ -364,24 +369,29 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
     output_path = get_output_path(input_path, output_format, output_dir)
 
     # Check if output file already exists
-    if output_path.exists() and not no_confirm:
-        response = input(f"File {output_path} already exists. Overwrite? (y/n): ")
-        if response.lower() != 'y':
-            print(f"Skipped: {input_path}")
-            return False
+    if output_path.exists():
+        if skip_existing:
+            if verbose:
+                print(f"Skipped (already exists): {input_path}")
+            return False, True  # Skipped
+        if not no_confirm:
+            response = input(f"File {output_path} already exists. Overwrite? (y/n): ")
+            if response.lower() != 'y':
+                print(f"Skipped: {input_path}")
+                return False, True  # Skipped
 
     # Convert the image
-    if convert_image(input_path, output_path, format_upper):
+    if convert_image(input_path, output_path, format_upper, lossless):
         if verbose:
             print(f"Converted: {input_path} -> {output_path}")
-        return True
+        return True, False
     else:
-        return False
+        return False, False
 
 
 def process_directory(input_dir: Path, output_format: str, output_dir: Optional[Path] = None,
                      no_confirm: bool = False, recursive: bool = True,
-                     parallel: bool = False, workers: Optional[int] = None, lossless: bool = False) -> Tuple[int, int]:
+                     parallel: bool = False, workers: Optional[int] = None, lossless: bool = False) -> Tuple[int, int, int]:
     """Process all images in a directory.
 
     Args:
@@ -393,11 +403,11 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
         lossless: Use lossless compression for WebP (default: False)
 
     Returns:
-        Tuple of (successful_count, failed_count)
+        Tuple of (successful_count, failed_count, skipped_count)
     """
     if not input_dir.is_dir():
         logger.error(f"Directory not found: {input_dir}")
-        return 0, 0
+        return 0, 0, 0
 
     # Find all supported image files
     image_files_set = set()
@@ -408,11 +418,18 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
         image_files_set.update(input_dir.glob(f"{pattern}{ext}"))
         image_files_set.update(input_dir.glob(f"{pattern}{ext.upper()}"))
 
-    image_files = sorted(image_files_set)  # Convert to sorted list for consistent ordering
+    # Exclude files in the output directory to avoid processing already converted files
+    actual_output_dir = output_dir if output_dir else input_dir / "converted"
+    try:
+        actual_output_dir_resolved = actual_output_dir.resolve()
+        image_files = [f for f in sorted(image_files_set) if not f.resolve().is_relative_to(actual_output_dir_resolved)]
+    except (ValueError, OSError):
+        # If output dir doesn't exist yet or can't be resolved, use all files
+        image_files = sorted(image_files_set)
 
     if not image_files:
         print(f"No supported image files found in {input_dir}")
-        return 0, 0
+        return 0, 0, 0
 
     print(f"Found {len(image_files)} image(s) to convert")
 
@@ -422,32 +439,102 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
 
     success_count = 0
     fail_count = 0
+    skip_count = 0
     actual_output_dir = output_dir if output_dir else input_dir / "converted"
     for img_file in tqdm(image_files, desc="Converting images", unit="file"):
         rel_output_dir = _resolve_output_dir(img_file, input_dir, output_dir, recursive)
-        if process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless):
+        success, skipped = process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless, skip_existing=False)
+        if success:
             success_count += 1
+        elif skipped:
+            skip_count += 1
         else:
             fail_count += 1
-    return success_count, fail_count
+    return success_count, fail_count, skip_count
 
 
-def _convert_single_file(args_tuple: Tuple[Path, str, Path, bool, bool]) -> Tuple[bool, str]:
+def _check_existing_files(
+    image_files: List[Path],
+    output_format: str,
+    input_dir: Path,
+    output_dir: Optional[Path],
+    recursive: bool
+) -> List[Path]:
+    """Check which output files already exist.
+
+    Args:
+        image_files: List of input image files
+        output_format: Target output format
+        input_dir: Root input directory
+        output_dir: Optional output directory
+        recursive: Whether processing recursively
+
+    Returns:
+        List of input files whose output files already exist
+    """
+    existing = []
+    for img_file in image_files:
+        rel_output_dir = _resolve_output_dir(img_file, input_dir, output_dir, recursive)
+        output_path = get_output_path(img_file, output_format, rel_output_dir)
+        if output_path.exists():
+            existing.append(img_file)
+    return existing
+
+
+def _prompt_overwrite_policy(existing_files: List[Path]) -> str:
+    """Prompt user for overwrite policy when existing files are found.
+
+    Args:
+        existing_files: List of files that already have outputs
+
+    Returns:
+        Policy string: 'all' (overwrite all), 'skip' (skip existing), or 'cancel'
+    """
+    print(f"\n⚠ Found {len(existing_files)} file(s) that already exist in the output directory.")
+    if len(existing_files) <= 5:
+        print("Existing files:")
+        for f in existing_files:
+            print(f"  - {f}")
+    else:
+        print("First 5 existing files:")
+        for f in existing_files[:5]:
+            print(f"  - {f}")
+        print(f"  ... and {len(existing_files) - 5} more")
+
+    print("\nChoose an action:")
+    print("  [a] Overwrite all existing files")
+    print("  [s] Skip existing files")
+    print("  [c] Cancel operation")
+
+    while True:
+        response = input("Your choice (a/s/c): ").strip().lower()
+        if response in ['a', 'all']:
+            return 'all'
+        elif response in ['s', 'skip']:
+            return 'skip'
+        elif response in ['c', 'cancel']:
+            return 'cancel'
+        else:
+            print("Invalid choice. Please enter 'a', 's', or 'c'.")
+
+
+def _convert_single_file(args_tuple: Tuple[Path, str, Path, bool, bool, bool]) -> Tuple[bool, str, bool]:
     """Wrapper function for parallel processing.
 
     Args:
-        args_tuple: Tuple of (img_file, output_format, rel_output_dir, no_confirm, lossless)
+        args_tuple: Tuple of (img_file, output_format, rel_output_dir, no_confirm, lossless, skip_existing)
 
     Returns:
-        Tuple of (success: bool, file_path: str)
+        Tuple of (success: bool, file_path: str, skipped: bool)
     """
-    img_file, output_format, rel_output_dir, no_confirm, lossless = args_tuple
+    img_file, output_format, rel_output_dir, no_confirm, lossless, skip_existing = args_tuple
     try:
-        success = process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless)
-        return (success, str(img_file))
+        success, skipped = process_file(img_file, output_format, rel_output_dir, no_confirm,
+                                       verbose=False, lossless=lossless, skip_existing=skip_existing)
+        return (success, str(img_file), skipped)
     except Exception as e:
         logger.error(f"Error processing {img_file}: {e}")
-        return (False, str(img_file))
+        return (False, str(img_file), False)
 
 
 def _process_directory_parallel(
@@ -459,7 +546,7 @@ def _process_directory_parallel(
     workers: Optional[int],
     image_files: List[Path],
     lossless: bool = False
-) -> Tuple[int, int]:
+) -> Tuple[int, int, int]:
     """Process directory with parallel execution.
 
     Args:
@@ -473,25 +560,47 @@ def _process_directory_parallel(
         lossless: Use lossless compression
 
     Returns:
-        Tuple of (successful_count, failed_count)
+        Tuple of (successful_count, failed_count, skipped_count)
     """
     actual_output_dir = output_dir if output_dir else input_dir / "converted"
     max_workers = workers or os.cpu_count() or 1
     success_count = 0
     fail_count = 0
+    skip_count = 0
+
+    # Check for existing files before parallel processing
+    if not no_confirm:
+        existing_files = _check_existing_files(image_files, output_format, input_dir, output_dir, recursive)
+        if existing_files:
+            policy = _prompt_overwrite_policy(existing_files)
+            if policy == 'cancel':
+                print("Operation cancelled by user.")
+                return 0, 0, 0
+            elif policy == 'skip':
+                # Remove existing files from the processing list
+                existing_set = set(existing_files)
+                image_files = [f for f in image_files if f not in existing_set]
+                skip_count = len(existing_files)
+            elif policy == 'all':
+                # Proceed with overwriting, set no_confirm to True for workers
+                no_confirm = True
+
     tasks = []
     for img_file in image_files:
         rel_output_dir = _resolve_output_dir(img_file, input_dir, output_dir, recursive)
-        tasks.append((img_file, output_format, rel_output_dir, no_confirm, lossless))
+        tasks.append((img_file, output_format, rel_output_dir, no_confirm, lossless, False))
+
     try:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_convert_single_file, task): task for task in tasks}
             with tqdm(total=len(futures), desc="Converting images", unit="file") as pbar:
                 for future in as_completed(futures):
                     try:
-                        success, img_file = future.result()
+                        success, img_file, skipped = future.result()
                         if success:
                             success_count += 1
+                        elif skipped:
+                            skip_count += 1
                         else:
                             fail_count += 1
                     except Exception as e:
@@ -505,7 +614,7 @@ def _process_directory_parallel(
             pbar.close()
         except Exception:
             pass
-    return success_count, fail_count
+    return success_count, fail_count, skip_count
 
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
@@ -624,10 +733,10 @@ def main() -> int:
 
     # Process file or directory
     if input_path.is_file():
-        success = process_file(input_path, output_format, output_dir, args.no_confirm, lossless=args.lossless)
+        success, skipped = process_file(input_path, output_format, output_dir, args.no_confirm, lossless=args.lossless)
         return 0 if success else 1
     elif input_path.is_dir():
-        success_count, fail_count = process_directory(
+        success_count, fail_count, skip_count = process_directory(
             input_path,
             output_format,
             output_dir,
@@ -637,7 +746,7 @@ def main() -> int:
             workers=args.workers,
             lossless=args.lossless
         )
-        print(f"\nConversion complete: {success_count} succeeded, {fail_count} failed")
+        print(f"\nConversion complete: {success_count} succeeded, {fail_count} failed, {skip_count} skipped")
         return 0 if fail_count == 0 else 1
     else:
         logger.error(f"Invalid path: {input_path}")
