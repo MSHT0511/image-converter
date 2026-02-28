@@ -7,10 +7,13 @@ Converts images between common formats including JPEG, PNG, BMP, GIF, TIFF, and 
 
 
 import argparse
+from datetime import datetime
 import functools
 import logging
 import os
+import platform
 import sys
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -319,18 +322,22 @@ def convert_image(input_path: Path, output_path: Path, output_format: str, lossl
     except OSError as e:
         # File I/O errors, permission denied, disk full, etc.
         logger.error(f"File operation failed for {input_path}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
     except MemoryError as e:
         # Out of memory (very large images)
         logger.error(f"Insufficient memory to process {input_path}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
     except ValueError as e:
         # Invalid image data or format issues
         logger.error(f"Invalid image format in {input_path}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
     except Exception as e:
         # Catch-all for unexpected errors
         logger.error(f"Unexpected error converting {input_path}: {type(e).__name__}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
 
 
@@ -519,23 +526,29 @@ def _prompt_overwrite_policy(existing_files: List[Path]) -> str:
             print("Invalid choice. Please enter 'a', 's', or 'c'.")
 
 
-def _convert_single_file(args_tuple: Tuple[Path, str, Path, bool, bool, bool]) -> Tuple[bool, str, bool]:
-    """Wrapper function for parallel processing.
+def _convert_single_file(args_tuple: Tuple) -> Tuple[bool, str, bool, Optional[str]]:
+    """Convert a single file (wrapper for parallel processing).
 
     Args:
         args_tuple: Tuple of (img_file, output_format, rel_output_dir, no_confirm, lossless, skip_existing)
 
     Returns:
-        Tuple of (success: bool, file_path: str, skipped: bool)
+        Tuple of (success: bool, file_path: str, skipped: bool, error_message: Optional[str])
     """
     img_file, output_format, rel_output_dir, no_confirm, lossless, skip_existing = args_tuple
     try:
         success, skipped = process_file(img_file, output_format, rel_output_dir, no_confirm,
                                        verbose=False, lossless=lossless, skip_existing=skip_existing)
-        return (success, str(img_file), skipped)
+        if not success and not skipped:
+            # エラーが発生した場合、エラーメッセージを返す
+            error_msg = f"Failed to convert {img_file}"
+            return (False, str(img_file), False, error_msg)
+        return (success, str(img_file), skipped, None)
     except Exception as e:
-        logger.error(f"Error processing {img_file}: {e}")
-        return (False, str(img_file), False)
+        # スタックトレース付きエラーメッセージ
+        tb = traceback.format_exc()
+        error_msg = f"Error processing {img_file}: {e}\n[開発者向け] 詳細なスタックトレース:\n{tb}"
+        return (False, str(img_file), False, error_msg)
 
 
 def _process_directory_parallel(
@@ -603,13 +616,16 @@ def _process_directory_parallel(
 
         for future in as_completed(futures):
             try:
-                success, img_file, skipped = future.result()
+                success, img_file, skipped, error_msg = future.result()
                 if success:
                     success_count += 1
                 elif skipped:
                     skip_count += 1
                 else:
                     fail_count += 1
+                    # エラーメッセージがあればログに記録
+                    if error_msg:
+                        logger.error(error_msg)
             except Exception as e:
                 logger.error(f"Error in worker: {e}")
                 fail_count += 1
@@ -720,6 +736,109 @@ Examples:
     return parser.parse_args(args)
 
 
+def setup_error_log() -> Path:
+    """Setup error log directory and return log file path.
+
+    Creates 'log/' directory if it doesn't exist and generates
+    a timestamped log file path.
+
+    Returns:
+        Path to the error log file (e.g., log/error_20260228_143025.log)
+
+    Raises:
+        OSError: If 'log' exists as a file instead of a directory
+    """
+    log_dir = Path('log')
+
+    # Check if 'log' exists as a file
+    if log_dir.exists() and not log_dir.is_dir():
+        raise OSError(f"Cannot create log directory: '{log_dir}' exists as a file")
+
+    log_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = log_dir / f'error_{timestamp}.log'
+
+    return log_file
+
+
+def add_error_file_handler(log_file: Path) -> logging.FileHandler:
+    """Add a file handler to the logger for error logging.
+
+    Args:
+        log_file: Path to the log file
+
+    Returns:
+        The created FileHandler instance
+    """
+    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.ERROR)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return file_handler
+
+
+def write_log_context(log_file: Path, args: Optional[argparse.Namespace] = None) -> None:
+    """Write execution context information to the log file.
+
+    Args:
+        log_file: Path to the log file
+        args: Parsed command-line arguments (optional)
+    """
+    try:
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write("=" * 60 + "\n")
+            f.write("Execution Context\n")
+            f.write("=" * 60 + "\n")
+            f.write(f"Command: {' '.join(sys.argv)}\n")
+            f.write(f"OS: {platform.system()} {platform.release()}\n")
+            f.write(f"Python: {sys.version.split()[0]}\n")
+            f.write(f"Working Directory: {os.getcwd()}\n")
+            
+            # Pillow version
+            try:
+                from PIL import __version__ as pil_version
+                f.write(f"Pillow: {pil_version}\n")
+            except ImportError:
+                f.write("Pillow: Not available\n")
+            
+            # Available formats
+            try:
+                formats = get_supported_formats()
+                format_list = ', '.join(sorted(set(formats.values())))
+                f.write(f"Supported Formats: {format_list}\n")
+            except Exception:
+                pass
+            
+            # Command-line arguments details
+            if args:
+                f.write(f"\nExecution Settings:\n")
+                f.write(f"  Input: {args.input}\n")
+                f.write(f"  Output Format: {args.format}\n")
+                if hasattr(args, 'output_dir') and args.output_dir:
+                    f.write(f"  Output Directory: {args.output_dir}\n")
+                if hasattr(args, 'parallel') and args.parallel:
+                    f.write(f"  Parallel Processing: Yes")
+                    if hasattr(args, 'workers') and args.workers:
+                        f.write(f" (workers: {args.workers})")
+                    f.write("\n")
+                if hasattr(args, 'lossless') and args.lossless:
+                    f.write(f"  Lossless: Yes\n")
+                if hasattr(args, 'no_recursive') and args.no_recursive:
+                    f.write(f"  Recursive: No\n")
+            
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 60 + "\n\n")
+    except Exception:
+        # エラーログへの書き込み失敗は無視（メインエラーを優先）
+        pass
+
+
 def main() -> int:
     """Main entry point for the CLI tool.
 
@@ -733,50 +852,84 @@ def main() -> int:
         stream=sys.stderr
     )
 
-    # Check if Pillow is available
-    if not PILLOW_AVAILABLE:
-        logger.error("Pillow is not installed. Install it with: pip install Pillow")
-        return 1
+    # Setup error log file handler at the start
+    log_file_path = setup_error_log()
+    file_handler = add_error_file_handler(log_file_path)
+    error_occurred = False
 
-    args = parse_args()
-
-    input_path = Path(args.input)
-    output_format = args.format.lower()
-    output_dir = Path(args.output_dir) if args.output_dir else None
-
-    # Validate input path exists
-    if not input_path.exists():
-        logger.error(f"Path not found: {input_path}")
-        return 1
-
-    # Validate input path for security (only for files)
-    if input_path.is_file():
-        try:
-            input_path = validate_input_path(input_path)
-        except (SecurityError, FileNotFoundError) as e:
-            logger.error(str(e))
+    try:
+        # Check if Pillow is available
+        if not PILLOW_AVAILABLE:
+            logger.error("Pillow is not installed. Install it with: pip install Pillow")
+            error_occurred = True
             return 1
 
-    # Process file or directory
-    if input_path.is_file():
-        success, skipped = process_file(input_path, output_format, output_dir, args.no_confirm, lossless=args.lossless)
-        return 0 if success else 1
-    elif input_path.is_dir():
-        success_count, fail_count, skip_count = process_directory(
-            input_path,
-            output_format,
-            output_dir,
-            args.no_confirm,
-            recursive=not args.no_recursive,
-            parallel=args.parallel,
-            workers=args.workers,
-            lossless=args.lossless
-        )
-        print(f"\nConversion complete: {success_count} succeeded, {fail_count} failed, {skip_count} skipped")
-        return 0 if fail_count == 0 else 1
-    else:
-        logger.error(f"Invalid path: {input_path}")
-        return 1
+        args = parse_args()
+
+        # Write context information to log file
+        write_log_context(log_file_path, args)
+
+        input_path = Path(args.input)
+        output_format = args.format.lower()
+        output_dir = Path(args.output_dir) if args.output_dir else None
+
+        # Validate input path exists
+        if not input_path.exists():
+            logger.error(f"Path not found: {input_path}")
+            error_occurred = True
+            return 1
+
+        # Validate input path for security (only for files)
+        if input_path.is_file():
+            try:
+                input_path = validate_input_path(input_path)
+            except (SecurityError, FileNotFoundError) as e:
+                logger.error(str(e))
+                error_occurred = True
+                return 1
+
+        # Process file or directory
+        if input_path.is_file():
+            success, skipped = process_file(input_path, output_format, output_dir, args.no_confirm, lossless=args.lossless)
+            if not success:
+                error_occurred = True
+            return 0 if success else 1
+        elif input_path.is_dir():
+            success_count, fail_count, skip_count = process_directory(
+                input_path,
+                output_format,
+                output_dir,
+                args.no_confirm,
+                recursive=not args.no_recursive,
+                parallel=args.parallel,
+                workers=args.workers,
+                lossless=args.lossless
+            )
+            if fail_count > 0:
+                error_occurred = True
+
+            print(f"\nConversion complete: {success_count} succeeded, {fail_count} failed, {skip_count} skipped")
+            return 0 if fail_count == 0 else 1
+        else:
+            logger.error(f"Invalid path: {input_path}")
+            error_occurred = True
+            return 1
+
+    finally:
+        # Cleanup file handler
+        if file_handler:
+            logger.removeHandler(file_handler)
+            file_handler.close()
+
+        # Show log file path if errors occurred, otherwise delete the empty log file
+        if error_occurred and log_file_path.exists():
+            print(f"\nエラーログを出力しました: {log_file_path.absolute()}")
+        elif log_file_path.exists():
+            # No errors occurred, remove the empty log file
+            try:
+                log_file_path.unlink()
+            except Exception:
+                pass  # Ignore cleanup errors
 
 
 if __name__ == '__main__':
