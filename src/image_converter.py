@@ -11,7 +11,9 @@ from datetime import datetime
 import functools
 import logging
 import os
+import platform
 import sys
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -320,18 +322,22 @@ def convert_image(input_path: Path, output_path: Path, output_format: str, lossl
     except OSError as e:
         # File I/O errors, permission denied, disk full, etc.
         logger.error(f"File operation failed for {input_path}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
     except MemoryError as e:
         # Out of memory (very large images)
         logger.error(f"Insufficient memory to process {input_path}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
     except ValueError as e:
         # Invalid image data or format issues
         logger.error(f"Invalid image format in {input_path}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
     except Exception as e:
         # Catch-all for unexpected errors
         logger.error(f"Unexpected error converting {input_path}: {type(e).__name__}: {e}")
+        logger.error(f"[開発者向け] 詳細なスタックトレース:\n{traceback.format_exc()}")
         return False
 
 
@@ -539,7 +545,9 @@ def _convert_single_file(args_tuple: Tuple) -> Tuple[bool, str, bool, Optional[s
             return (False, str(img_file), False, error_msg)
         return (success, str(img_file), skipped, None)
     except Exception as e:
-        error_msg = f"Error processing {img_file}: {e}"
+        # スタックトレース付きエラーメッセージ
+        tb = traceback.format_exc()
+        error_msg = f"Error processing {img_file}: {e}\n[開発者向け] 詳細なスタックトレース:\n{tb}"
         return (False, str(img_file), False, error_msg)
 
 
@@ -775,6 +783,62 @@ def add_error_file_handler(log_file: Path) -> logging.FileHandler:
     return file_handler
 
 
+def write_log_context(log_file: Path, args: Optional[argparse.Namespace] = None) -> None:
+    """Write execution context information to the log file.
+
+    Args:
+        log_file: Path to the log file
+        args: Parsed command-line arguments (optional)
+    """
+    try:
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write("=" * 60 + "\n")
+            f.write("Execution Context\n")
+            f.write("=" * 60 + "\n")
+            f.write(f"Command: {' '.join(sys.argv)}\n")
+            f.write(f"OS: {platform.system()} {platform.release()}\n")
+            f.write(f"Python: {sys.version.split()[0]}\n")
+            f.write(f"Working Directory: {os.getcwd()}\n")
+            
+            # Pillow version
+            try:
+                from PIL import __version__ as pil_version
+                f.write(f"Pillow: {pil_version}\n")
+            except ImportError:
+                f.write("Pillow: Not available\n")
+            
+            # Available formats
+            try:
+                formats = get_supported_formats()
+                format_list = ', '.join(sorted(set(formats.values())))
+                f.write(f"Supported Formats: {format_list}\n")
+            except Exception:
+                pass
+            
+            # Command-line arguments details
+            if args:
+                f.write(f"\nExecution Settings:\n")
+                f.write(f"  Input: {args.input}\n")
+                f.write(f"  Output Format: {args.format}\n")
+                if hasattr(args, 'output_dir') and args.output_dir:
+                    f.write(f"  Output Directory: {args.output_dir}\n")
+                if hasattr(args, 'parallel') and args.parallel:
+                    f.write(f"  Parallel Processing: Yes")
+                    if hasattr(args, 'workers') and args.workers:
+                        f.write(f" (workers: {args.workers})")
+                    f.write("\n")
+                if hasattr(args, 'lossless') and args.lossless:
+                    f.write(f"  Lossless: Yes\n")
+                if hasattr(args, 'no_recursive') and args.no_recursive:
+                    f.write(f"  Recursive: No\n")
+            
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 60 + "\n\n")
+    except Exception:
+        # エラーログへの書き込み失敗は無視（メインエラーを優先）
+        pass
+
+
 def main() -> int:
     """Main entry point for the CLI tool.
 
@@ -801,6 +865,9 @@ def main() -> int:
             return 1
 
         args = parse_args()
+
+        # Write context information to log file
+        write_log_context(log_file_path, args)
 
         input_path = Path(args.input)
         output_format = args.format.lower()

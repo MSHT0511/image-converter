@@ -2152,3 +2152,65 @@ class TestErrorLogging:
 
             # クリーンアップ
             log_file.unlink()
+
+    def test_log_context_information(self, temp_dir):
+        """ログファイルにコンテキスト情報が含まれることをテスト"""
+        from image_converter import main
+
+        # エラーを発生させる
+        with patch('sys.argv', ['image_converter.py', str(temp_dir / 'nonexistent.png'), 'jpeg', '--parallel']):
+            exit_code = main()
+            assert exit_code == 1
+
+            # ログファイルを確認
+            log_dir = Path('log')
+            log_files = list(log_dir.glob('error_*.log'))
+            assert len(log_files) >= 1
+
+            log_file = log_files[-1]
+            log_content = log_file.read_text(encoding='utf-8')
+
+            # コンテキスト情報が含まれていることを確認
+            assert 'Execution Context' in log_content
+            assert 'Command:' in log_content
+            assert 'OS:' in log_content
+            assert 'Python:' in log_content
+            assert 'Working Directory:' in log_content
+            assert 'Pillow:' in log_content
+            assert 'Supported Formats:' in log_content
+            assert 'Execution Settings:' in log_content
+            assert 'Input:' in log_content
+            assert 'Output Format:' in log_content
+            assert 'Parallel Processing: Yes' in log_content
+            assert 'Timestamp:' in log_content
+
+            # クリーンアップ
+            log_file.unlink()
+
+    def test_log_stack_trace(self, temp_dir):
+        """ログファイルにスタックトレースが含まれることをテスト"""
+        from image_converter import main
+
+        # 破損した画像ファイルを作成してエラーを発生させる
+        broken_file = temp_dir / 'broken.png'
+        broken_file.write_bytes(b'not a valid image')
+
+        with patch('sys.argv', ['image_converter.py', str(broken_file), 'jpeg', '--no-confirm']):
+            exit_code = main()
+            assert exit_code == 1
+
+            # ログファイルを確認
+            log_dir = Path('log')
+            log_files = list(log_dir.glob('error_*.log'))
+            assert len(log_files) >= 1
+
+            log_file = log_files[-1]
+            log_content = log_file.read_text(encoding='utf-8')
+
+            # スタックトレースが含まれていることを確認
+            assert '[開発者向け] 詳細なスタックトレース:' in log_content
+            assert 'Traceback' in log_content
+            assert 'File' in log_content
+
+            # クリーンアップ
+            log_file.unlink()
