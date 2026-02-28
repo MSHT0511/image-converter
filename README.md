@@ -2,6 +2,8 @@
 
 
 [![Test](https://github.com/MSHT0511/image-converter/workflows/Test/badge.svg)](https://github.com/MSHT0511/image-converter/actions)
+[![Lint](https://github.com/MSHT0511/image-converter/workflows/Lint/badge.svg)](https://github.com/MSHT0511/image-converter/actions)
+[![Security](https://github.com/MSHT0511/image-converter/workflows/Security/badge.svg)](https://github.com/MSHT0511/image-converter/actions)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Star](https://img.shields.io/github/stars/MSHT0511/image-converter?style=social)](https://github.com/MSHT0511/image-converter/stargazers)
@@ -301,7 +303,7 @@ python src/image_converter.py photo.jpg avif
 
 ## 🙏 謝辞
 
-- [Pillow (PIL Fork)](https://python-pillow.org/) - The Python Imaging Library を使用して構築
+- [Pillow (PIL Fork)](https://pillow.readthedocs.io/) - The Python Imaging Library を使用して構築
 - [pillow-avif-plugin](https://github.com/fdintino/pillow-avif-plugin) - AVIFフォーマットサポート
 - [tqdm](https://github.com/tqdm/tqdm) - プログレスバー表示
 - [pytest](https://pytest.org/) - テストフレームワーク

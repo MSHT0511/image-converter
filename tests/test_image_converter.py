@@ -2,38 +2,36 @@
 image_converterモジュールのユニットテスト
 """
 
-import os
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import pytest
 from PIL import Image
-from unittest.mock import patch, mock_open, MagicMock
-import io
 
 # srcディレクトリをパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from image_converter import (
-    is_supported_format,
-    get_output_path,
-    convert_image,
-    process_file,
-    process_directory,
-    get_supported_formats,
+    ConversionError,
     ImageConverterError,
     SecurityError,
-    ConversionError,
     UnsupportedFormatError,
-    validate_input_path,
     _check_existing_files,
     _prompt_overwrite_policy,
-    _resolve_output_dir
+    convert_image,
+    get_output_path,
+    get_supported_formats,
+    is_supported_format,
+    process_directory,
+    process_file,
+    validate_input_path,
 )
-
 
 # ========================================
 # テスト用ヘルパー関数
 # ========================================
+
 
 def create_animated_gif(path: Path, num_frames: int = 3, duration: int = 100, loop: int = 0):
     """テスト用のアニメーションGIFを作成"""
@@ -42,14 +40,7 @@ def create_animated_gif(path: Path, num_frames: int = 3, duration: int = 100, lo
     for i in range(num_frames):
         img = Image.new('RGB', (50, 50), color=colors[i % len(colors)])
         frames.append(img)
-    frames[0].save(
-        path,
-        format='GIF',
-        save_all=True,
-        append_images=frames[1:],
-        duration=duration,
-        loop=loop
-    )
+    frames[0].save(path, format='GIF', save_all=True, append_images=frames[1:], duration=duration, loop=loop)
 
 
 def create_large_file_mock(path: Path, size_mb: int):
@@ -62,6 +53,7 @@ def create_large_file_mock(path: Path, size_mb: int):
 # ========================================
 # セキュリティテスト
 # ========================================
+
 
 class TestSecurityValidation:
     """セキュリティバリデーション関数のテスト"""
@@ -101,7 +93,7 @@ class TestSecurityValidation:
         with patch.object(Path, 'stat', return_value=mock_stat_result):
             # Also need to mock resolve to avoid issues
             with patch.object(Path, 'resolve', return_value=test_file):
-                with pytest.raises(SecurityError, match="File too large"):
+                with pytest.raises(SecurityError, match='File too large'):
                     validate_input_path(test_file, max_size=100_000_000)
         test_file = temp_dir / 'nonexistent.png'
 
@@ -121,7 +113,8 @@ class TestSecurityValidation:
             assert validated_path.resolve() == real_file.resolve()
         except OSError:
             # シンボリックリンクをサポートしていないシステムではスキップ
-            pytest.skip("このシステムではシンボリックリンクがサポートされていません")
+            pytest.skip('このシステムではシンボリックリンクがサポートされていません')
+
     def test_validate_input_path_broken_symlink(self, temp_dir):
         """壊れたシンボリックリンクがSecurityErrorを発生させることをテスト"""
         symlink_file = temp_dir / 'broken_link.png'
@@ -129,11 +122,12 @@ class TestSecurityValidation:
 
         try:
             symlink_file.symlink_to(nonexistent)
-            with pytest.raises(SecurityError, match="Invalid path or broken symlink"):
+            with pytest.raises(SecurityError, match='Invalid path or broken symlink'):
                 validate_input_path(symlink_file)
         except OSError:
             # シンボリックリンクをサポートしていないシステムではスキップ
-            pytest.skip("このシステムではシンボリックリンクがサポートされていません")
+            pytest.skip('このシステムではシンボリックリンクがサポートされていません')
+
     def test_validate_input_path_directory(self, temp_dir):
         """Test that directories are handled (no size check for dirs)."""
         test_dir = temp_dir / 'subdir'
@@ -148,6 +142,7 @@ class TestSecurityValidation:
 # Custom Exception Tests
 # ========================================
 
+
 class TestCustomExceptions:
     """カスタム例外クラスとその継承関係のテスト"""
 
@@ -159,34 +154,34 @@ class TestCustomExceptions:
 
     def test_security_error_message(self):
         """カスタムメッセージを持つSecurityErrorをテスト"""
-        msg = "テストセキュリティエラー"
+        msg = 'テストセキュリティエラー'
         exc = SecurityError(msg)
         assert str(exc) == msg
         assert isinstance(exc, Exception)
 
     def test_conversion_error_message(self):
         """カスタムメッセージを持つConversionErrorをテスト"""
-        msg = "テスト変換エラー"
+        msg = 'テスト変換エラー'
         exc = ConversionError(msg)
         assert str(exc) == msg
 
     def test_unsupported_format_error_message(self):
         """カスタムメッセージを持つUnsupportedFormatErrorをテスト"""
-        msg = "サポートされていないフォーマット"
+        msg = 'サポートされていないフォーマット'
         exc = UnsupportedFormatError(msg)
         assert str(exc) == msg
 
     def test_exception_can_be_caught_by_base_class(self):
         """特定の例外がベースクラスでキャッチできることをテスト"""
         try:
-            raise SecurityError("セキュリティ問題")
+            raise SecurityError('セキュリティ問題')
         except ImageConverterError as e:
             assert isinstance(e, SecurityError)
 
     def test_unsupported_format_caught_as_conversion_error(self):
         """UnsupportedFormatErrorがConversionErrorとしてキャッチできることをテスト"""
         try:
-            raise UnsupportedFormatError("不正なフォーマット")
+            raise UnsupportedFormatError('不正なフォーマット')
         except ConversionError as e:
             assert isinstance(e, UnsupportedFormatError)
 
@@ -358,7 +353,6 @@ class TestParallelProcessing:
         assert skip == 0
 
 
-
 @pytest.fixture
 def temp_dir(tmp_path):
     """テストファイル用の一時ディレクトリを作成"""
@@ -455,7 +449,6 @@ class TestOutputPath:
 
 
 class TestImageConversion:
-
     def test_convert_png_to_ico(self, sample_images, temp_dir):
         """PNGかICO変換をテスト（透過性保持）"""
         input_path = sample_images['png_alpha']
@@ -657,7 +650,7 @@ class TestImageConversion:
         output_path = temp_dir / 'output.jpg'
 
         # Mock Path.open to raise PermissionError
-        with patch('PIL.Image.open', side_effect=OSError("Permission denied")):
+        with patch('PIL.Image.open', side_effect=OSError('Permission denied')):
             assert not convert_image(input_path, output_path, 'JPEG')
 
     def test_convert_with_memory_error(self, temp_dir):
@@ -669,7 +662,7 @@ class TestImageConversion:
         output_path = temp_dir / 'output.jpg'
 
         # Mock Image.save to raise MemoryError
-        with patch.object(Image.Image, 'save', side_effect=MemoryError("Out of memory")):
+        with patch.object(Image.Image, 'save', side_effect=MemoryError('Out of memory')):
             assert not convert_image(input_path, output_path, 'JPEG')
 
     def test_convert_with_value_error(self, temp_dir):
@@ -681,7 +674,7 @@ class TestImageConversion:
         output_path = temp_dir / 'output.jpg'
 
         # Mock Image.save to raise ValueError
-        with patch.object(Image.Image, 'save', side_effect=ValueError("Invalid format")):
+        with patch.object(Image.Image, 'save', side_effect=ValueError('Invalid format')):
             assert not convert_image(input_path, output_path, 'JPEG')
 
     # ========================================
@@ -808,7 +801,7 @@ class TestProcessFile:
 
         # 標準出力をキャプチャして"Converted:"メッセージがあることを確認
         captured = capsys.readouterr()
-        assert "Converted:" in captured.out
+        assert 'Converted:' in captured.out
         assert str(input_path) in captured.out
 
     def test_process_file_verbose_false(self, sample_images, temp_dir, capsys):
@@ -822,7 +815,7 @@ class TestProcessFile:
 
         # 標準出力をキャプチャして"Converted:"メッセージがないことを確認
         captured = capsys.readouterr()
-        assert "Converted:" not in captured.out
+        assert 'Converted:' not in captured.out
 
     def test_process_file_verbose_default(self, sample_images, temp_dir, capsys):
         """デフォルト動作がverbose=Trueであることをテスト"""
@@ -834,7 +827,7 @@ class TestProcessFile:
 
         # デフォルトでverbose出力があることを確認
         captured = capsys.readouterr()
-        assert "Converted:" in captured.out
+        assert 'Converted:' in captured.out
 
     # ========================================
     # 入力検証テスト
@@ -903,7 +896,6 @@ class TestProcessFile:
         process_file(input_path, 'jpeg', no_confirm=True)
         output_path = output_dir / 'test.jpeg'
         assert output_path.exists()
-        original_mtime = output_path.stat().st_mtime
 
         # Second conversion with mock user input 'n'
         with patch('builtins.input', return_value='n'):
@@ -912,7 +904,7 @@ class TestProcessFile:
 
         # Verify output contains "Skipped"
         captured = capsys.readouterr()
-        assert "Skipped" in captured.out
+        assert 'Skipped' in captured.out
 
     def test_process_file_no_confirm_overwrites(self, sample_images, temp_dir):
         """Test that no_confirm=True overwrites without prompting."""
@@ -959,12 +951,14 @@ class TestProcessFile:
         assert output_path.exists()
 
         # Second conversion with skip_existing=True and verbose=True
-        success, skipped = process_file(input_path, 'jpeg', output_dir, no_confirm=True, skip_existing=True, verbose=True)
+        success, skipped = process_file(
+            input_path, 'jpeg', output_dir, no_confirm=True, skip_existing=True, verbose=True
+        )
         assert not success and skipped
 
         # Verify output contains "Skipped (already exists)"
         captured = capsys.readouterr()
-        assert "Skipped (already exists)" in captured.out
+        assert 'Skipped (already exists)' in captured.out
 
 
 class TestProcessDirectory:
@@ -1040,7 +1034,7 @@ class TestProcessDirectory:
         img.save(test_dir / 'test.png', 'PNG')
 
         # Mock glob to raise PermissionError
-        with patch.object(Path, 'glob', side_effect=PermissionError("Access denied")):
+        with patch.object(Path, 'glob', side_effect=PermissionError('Access denied')):
             try:
                 success, fail, skip = process_directory(test_dir, 'jpeg', no_confirm=True)
                 # 適切に処理されるはず
@@ -1305,9 +1299,9 @@ class TestOverwritePolicy:
             _prompt_overwrite_policy(existing_files)
 
         captured = capsys.readouterr()
-        assert "Found 2 file(s) that already exist" in captured.out
-        assert "file1.png" in captured.out
-        assert "file2.png" in captured.out
+        assert 'Found 2 file(s) that already exist' in captured.out
+        assert 'file1.png' in captured.out
+        assert 'file2.png' in captured.out
 
     def test_prompt_overwrite_policy_truncates_long_list(self, temp_dir, capsys):
         """ファイルリストが長い場合に切り詰められることをテスト"""
@@ -1318,14 +1312,15 @@ class TestOverwritePolicy:
             _prompt_overwrite_policy(existing_files)
 
         captured = capsys.readouterr()
-        assert "Found 10 file(s) that already exist" in captured.out
-        assert "First 5" in captured.out
-        assert "and 5 more" in captured.out
+        assert 'Found 10 file(s) that already exist' in captured.out
+        assert 'First 5' in captured.out
+        assert 'and 5 more' in captured.out
 
 
 # ========================================
 # CLI統合テスト
 # ========================================
+
 
 class TestCLI:
     """CLI機能のテスト（parse_args、main）"""
@@ -1458,7 +1453,7 @@ class TestCLI:
 
         # validate_input_pathがSecurityErrorを発生させるようにモック
         with patch('sys.argv', ['image_converter.py', str(input_path), 'jpeg']):
-            with patch('image_converter.validate_input_path', side_effect=SecurityError("Security issue")):
+            with patch('image_converter.validate_input_path', side_effect=SecurityError('Security issue')):
                 exit_code = main()
 
         assert exit_code == 1
@@ -1501,7 +1496,9 @@ class TestCLI:
             img = Image.new('RGB', (50, 50), color='yellow')
             img.save(temp_dir / f'img{i}.png', 'PNG')
 
-        with patch('sys.argv', ['image_converter.py', str(temp_dir), 'jpeg', '--parallel', '--workers', '2', '--no-confirm']):
+        with patch(
+            'sys.argv', ['image_converter.py', str(temp_dir), 'jpeg', '--parallel', '--workers', '2', '--no-confirm']
+        ):
             exit_code = main()
 
         assert exit_code == 0
@@ -1510,6 +1507,7 @@ class TestCLI:
 # ========================================
 # 並列処理エラーハンドリングテスト
 # ========================================
+
 
 class TestParallelProcessingErrorHandling:
     """並列処理のエラーハンドリングテスト"""
@@ -1547,9 +1545,7 @@ class TestParallelProcessingErrorHandling:
         broken.write_text('not an image')
 
         # 並列処理で実行
-        success, fail, skip = process_directory(
-            temp_dir, 'jpeg', None, True, True, True, 2
-        )
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
 
         # 正常なファイルは成功し、破損したファイルは失敗する
         assert success >= 2
@@ -1569,9 +1565,7 @@ class TestParallelProcessingErrorHandling:
         img.save(subdir / 'sub.png', 'PNG')
 
         # 非再帰モードで並列処理
-        success, fail, skip = process_directory(
-            temp_dir, 'jpeg', None, True, False, True, 2
-        )
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, False, True, 2)
 
         # ルートディレクトリの3ファイルのみ処理される
         assert success == 3
@@ -1589,9 +1583,11 @@ class TestParallelProcessingErrorHandling:
 
         # ProcessPoolExecutor.submitをモックしてKeyboardInterruptを発生させる
         from concurrent.futures import ProcessPoolExecutor
+
         original_submit = ProcessPoolExecutor.submit
 
         call_count = [0]
+
         def mock_submit(self, fn, *args):
             call_count[0] += 1
             if call_count[0] >= 3:
@@ -1600,9 +1596,7 @@ class TestParallelProcessingErrorHandling:
 
         with patch.object(ProcessPoolExecutor, 'submit', mock_submit):
             try:
-                success, fail, skip = process_directory(
-                    temp_dir, 'jpeg', None, True, True, True, 2
-                )
+                success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
                 # KeyboardInterruptが処理され、部分的な結果が返される
                 assert success >= 0
             except KeyboardInterrupt:
@@ -1617,16 +1611,12 @@ class TestParallelProcessingErrorHandling:
             img.save(temp_dir / f'img{i}.png', 'PNG')
 
         # 最初の変換
-        success1, fail1, skip1 = process_directory(
-            temp_dir, 'jpeg', None, True, True, True, 2
-        )
+        success1, fail1, skip1 = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
         assert success1 == 5
 
         # 既存ファイルをスキップする設定で再度処理
         with patch('builtins.input', return_value='s'):
-            success2, fail2, skip2 = process_directory(
-                temp_dir, 'jpeg', None, False, True, True, 2
-            )
+            success2, fail2, skip2 = process_directory(temp_dir, 'jpeg', None, False, True, True, 2)
 
         # すべてスキップされるはず
         assert skip2 == 5
@@ -1636,6 +1626,7 @@ class TestParallelProcessingErrorHandling:
 # ========================================
 # 追加のエラーハンドリングテスト
 # ========================================
+
 
 class TestAdditionalErrorHandling:
     """追加のエラーハンドリングとエッジケースのテスト"""
@@ -1648,7 +1639,7 @@ class TestAdditionalErrorHandling:
         _check_avif_support.cache_clear()
 
         # features.checkが例外を発生させるようにモック
-        with patch('PIL.features.check', side_effect=Exception("Feature check failed")):
+        with patch('PIL.features.check', side_effect=Exception('Feature check failed')):
             # 例外が発生してもFalseが返される
             result = _check_avif_support()
             assert result is False
@@ -1662,11 +1653,11 @@ class TestAdditionalErrorHandling:
         output_dir = temp_dir / 'output'
 
         # mkdir がOSErrorを発生させるようにモック
-        with patch.object(Path, 'mkdir', side_effect=OSError("Permission denied")):
-            with pytest.raises(OSError, match="Failed to create output directory"):
+        with patch.object(Path, 'mkdir', side_effect=OSError('Permission denied')):
+            with pytest.raises(OSError, match='Failed to create output directory'):
                 get_output_path(input_path, 'jpeg', output_dir)
 
-    @pytest.mark.skip(reason="Difficult to mock Path.stat() behavior correctly")
+    @pytest.mark.skip(reason='Difficult to mock Path.stat() behavior correctly')
     def test_validate_input_path_file_access_error(self, temp_dir):
         """validate_input_pathでファイルアクセスエラーをテスト"""
         test_file = temp_dir / 'test.png'
@@ -1682,11 +1673,11 @@ class TestAdditionalErrorHandling:
             # 最初の呼び出し（exists/is_fileチェック）は成功させ、
             # 2回目の呼び出し（サイズチェック）でエラー
             if call_count[0] >= 2:
-                raise OSError("Access denied")
+                raise OSError('Access denied')
             return original_stat()
 
         with patch.object(Path, 'stat', mock_stat):
-            with pytest.raises(SecurityError, match="Cannot access file"):
+            with pytest.raises(SecurityError, match='Cannot access file'):
                 validate_input_path(test_file)
 
     def test_validate_input_path_resolved_not_exists(self, temp_dir):
@@ -1714,7 +1705,7 @@ class TestAdditionalErrorHandling:
         class CustomError(Exception):
             pass
 
-        with patch('PIL.Image.open', side_effect=CustomError("Unexpected error")):
+        with patch('PIL.Image.open', side_effect=CustomError('Unexpected error')):
             result = convert_image(input_path, output_path, 'JPEG')
             assert result is False
             assert not output_path.exists()
@@ -1739,10 +1730,7 @@ class TestAdditionalErrorHandling:
         input_path = sample_images['png']
         output_dir = temp_dir / 'lossless_output'
 
-        success, skipped = process_file(
-            input_path, 'webp', output_dir,
-            no_confirm=True, verbose=False, lossless=True
-        )
+        success, skipped = process_file(input_path, 'webp', output_dir, no_confirm=True, verbose=False, lossless=True)
 
         assert success and not skipped
         assert (output_dir / 'test.webp').exists()
@@ -1750,7 +1738,7 @@ class TestAdditionalErrorHandling:
     def test_animated_gif_lossless_avif(self, temp_dir):
         """アニメーションGIFのロスレスAVIF変換をテスト"""
         if 'AVIF' not in get_supported_formats().values():
-            pytest.skip("AVIF not supported")
+            pytest.skip('AVIF not supported')
 
         input_path = temp_dir / 'animated.gif'
         create_animated_gif(input_path, num_frames=3)
@@ -1793,6 +1781,7 @@ class TestAdditionalErrorHandling:
         # 出力画像を確認
         with Image.open(output_path) as img_out:
             assert img_out.format == 'JPEG'
+
     def test_convert_palette_mode_image(self, temp_dir):
         """パレットモード（P）画像の変換をテスト"""
         input_path = temp_dir / 'palette.png'
@@ -1856,9 +1845,7 @@ class TestAdditionalErrorHandling:
             img.save(temp_dir / f'img{i:03d}.png', 'PNG')
 
         # 並列処理で変換
-        success, fail, skip = process_directory(
-            temp_dir, 'jpeg', None, True, True, True, 4
-        )
+        success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 4)
 
         assert success == 50
         assert fail == 0
@@ -1883,14 +1870,12 @@ class TestAdditionalErrorHandling:
             # convertedディレクトリまたはoutputディレクトリのチェック時に例外を発生させる
             # パスの最後の部分（basename）が 'output' または 'converted' の場合のみ
             if hasattr(other, 'name') and other.name in ('output', 'converted'):
-                raise ValueError("Cannot determine relative path")
+                raise ValueError('Cannot determine relative path')
             return original_is_relative_to(self, other)
 
         with patch.object(Path, 'is_relative_to', mock_is_relative_to):
             # 例外が発生してもフォールバックして処理は続行される
-            success, fail, skip = process_directory(
-                temp_dir, 'jpeg', output_dir, True, True, False, None
-            )
+            success, fail, skip = process_directory(temp_dir, 'jpeg', output_dir, True, True, False, None)
 
             # ファイルは正常に処理される
             assert success >= 3
@@ -1909,7 +1894,7 @@ class TestAdditionalErrorHandling:
         output_dir.mkdir()
 
         # process_fileが予期しない例外を投げるようにモック
-        with patch('image_converter.process_file', side_effect=RuntimeError("Unexpected error")):
+        with patch('image_converter.process_file', side_effect=RuntimeError('Unexpected error')):
             args_tuple = (test_file, 'jpeg', output_dir, True, False, False)
             success, file_path, skipped, error_msg = _convert_single_file(args_tuple)
 
@@ -1927,17 +1912,13 @@ class TestAdditionalErrorHandling:
             img.save(temp_dir / f'file{i}.png', 'PNG')
 
         # 最初の変換を実行
-        success1, fail1, skip1 = process_directory(
-            temp_dir, 'jpeg', None, True, True, True, 2
-        )
+        success1, fail1, skip1 = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
         assert success1 == 5
 
         # 既存ファイルをスキップするポリシーで再実行
         # ユーザー入力'skip'をモック
         with patch('builtins.input', return_value='skip'):
-            success2, fail2, skip2 = process_directory(
-                temp_dir, 'jpeg', None, False, True, True, 2
-            )
+            success2, fail2, skip2 = process_directory(temp_dir, 'jpeg', None, False, True, True, 2)
 
             # すべてスキップされる
             assert skip2 == 5
@@ -1952,6 +1933,7 @@ class TestAdditionalErrorHandling:
             img.save(temp_dir / f'img{i}.png', 'PNG')
 
         from concurrent.futures import Future
+
         original_result = Future.result
         call_count = [0]
 
@@ -1959,15 +1941,13 @@ class TestAdditionalErrorHandling:
             call_count[0] += 1
             # 2番目の結果で例外を投げる
             if call_count[0] == 2:
-                raise RuntimeError("Worker crashed")
+                raise RuntimeError('Worker crashed')
             # 通常の動作
             return original_result(self, timeout=timeout)
 
         with patch.object(Future, 'result', mock_result):
             # 並列処理を実行
-            success, fail, skip = process_directory(
-                temp_dir, 'jpeg', None, True, True, True, 2
-            )
+            success, fail, skip = process_directory(temp_dir, 'jpeg', None, True, True, True, 2)
 
             # 例外が発生したタスクは失敗としてカウントされる
             assert fail >= 1
@@ -1978,6 +1958,7 @@ class TestAdditionalErrorHandling:
 # ========================================
 # エラーログ機能テスト
 # ========================================
+
 
 class TestErrorLogging:
     """エラーログ機能のテスト"""
@@ -2036,7 +2017,6 @@ class TestErrorLogging:
             # ログファイルが削除されている、または存在しないことを確認
             log_dir = Path('log')
             if log_dir.exists():
-                log_files = list(log_dir.glob('error_*.log'))
                 # 古いログファイルは残っている可能性があるが、最新のものは削除されているはず
                 # または、ログファイルメッセージがコンソールに表示されていないことを確認
                 captured = capsys.readouterr()
@@ -2052,6 +2032,7 @@ class TestErrorLogging:
         if log_dir.exists():
             # 一時的に移動またはリネーム（テスト後に戻す）
             import shutil
+
             backup_dir = Path('log_backup_test')
             if backup_dir.exists():
                 shutil.rmtree(backup_dir)
@@ -2075,13 +2056,15 @@ class TestErrorLogging:
             if Path('log_backup_test').exists():
                 if log_dir.exists():
                     import shutil
+
                     shutil.rmtree(log_dir)
                 shutil.move('log_backup_test', str(log_dir))
 
     def test_log_file_format(self, temp_dir):
         """ログファイル名のフォーマットが正しいことをテスト"""
-        from image_converter import setup_error_log
         import re
+
+        from image_converter import setup_error_log
 
         log_file = setup_error_log()
 
@@ -2103,7 +2086,9 @@ class TestErrorLogging:
         broken_file.write_bytes(b'not a valid image')
 
         # 並列処理で変換を実行
-        with patch('sys.argv', ['image_converter.py', str(temp_dir), 'jpeg', '--no-confirm', '--parallel', '--workers', '2']):
+        with patch(
+            'sys.argv', ['image_converter.py', str(temp_dir), 'jpeg', '--no-confirm', '--parallel', '--workers', '2']
+        ):
             exit_code = main()
 
             # エラーがあるので終了コードは1
@@ -2147,6 +2132,7 @@ class TestErrorLogging:
             # ログフォーマットが正しいことを確認
             # 形式: YYYY-MM-DD HH:MM:SS - ERROR - メッセージ
             import re
+
             pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - ERROR - .+'
             assert re.search(pattern, log_content)
 
