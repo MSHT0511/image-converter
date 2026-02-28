@@ -1,51 +1,3 @@
-def _convert_single_file(args_tuple):
-    """Wrapper function for parallel processing."""
-    img_file, output_format, rel_output_dir, no_confirm, lossless = args_tuple
-    try:
-        success = process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless)
-        return (success, str(img_file))
-    except Exception as e:
-        print(f"Error processing {img_file}: {e}", file=sys.stderr)
-        return (False, str(img_file))
-
-
-def _process_directory_parallel(input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files, lossless=False):
-    """Process directory with parallel execution."""
-    actual_output_dir = output_dir if output_dir else input_dir / "converted"
-    max_workers = workers or os.cpu_count()
-    success_count = 0
-    fail_count = 0
-    tasks = []
-    for img_file in image_files:
-        if recursive:
-            rel_path = img_file.parent.relative_to(input_dir)
-            rel_output_dir = actual_output_dir / rel_path
-        else:
-            rel_output_dir = actual_output_dir
-        tasks.append((img_file, output_format, rel_output_dir, no_confirm, lossless))
-    try:
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_convert_single_file, task): task for task in tasks}
-            with tqdm(total=len(futures), desc="Converting images", unit="file") as pbar:
-                for future in as_completed(futures):
-                    try:
-                        success, img_file = future.result()
-                        if success:
-                            success_count += 1
-                        else:
-                            fail_count += 1
-                    except Exception as e:
-                        print(f"Error in worker: {e}", file=sys.stderr)
-                        fail_count += 1
-                    pbar.update(1)
-    except KeyboardInterrupt:
-        print("\nInterrupted by user. Cancelling remaining tasks...", file=sys.stderr)
-        # tqdmバーを閉じる
-        try:
-            pbar.close()
-        except Exception:
-            pass
-    return success_count, fail_count
 #!/usr/bin/env python3
 """
 Image Converter CLI Tool
@@ -55,15 +7,18 @@ Converts images between common formats including JPEG, PNG, BMP, GIF, TIFF, and 
 
 
 import argparse
+import functools
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# 並列処理・進捗バー用
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
-import multiprocessing
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 
 # Custom Exception Classes
@@ -86,25 +41,21 @@ class UnsupportedFormatError(ConversionError):
     """Exception raised for unsupported image formats."""
     pass
 
-# AVIFサポート判定（遅延評価用）
-_avif_support_cached: Optional[bool] = None
 
-
+@functools.lru_cache(maxsize=1)
 def _check_avif_support() -> bool:
-    """Check if AVIF format is supported by Pillow."""
-    global _avif_support_cached
-    if _avif_support_cached is not None:
-        return _avif_support_cached
+    """Check if AVIF format is supported by Pillow.
 
+    Returns:
+        True if AVIF is supported, False otherwise
+    """
     try:
         from PIL import Image, features
         # PIL.features.check()でAVIFエンコーダーの有無を確認
         # pillow-avif-pluginがインストールされていれば自動的に統合される
-        _avif_support_cached = features.check('avif') or '.avif' in Image.registered_extensions()
+        return features.check('avif') or '.avif' in Image.registered_extensions()
     except Exception:
-        _avif_support_cached = False
-
-    return _avif_support_cached
+        return False
 
 
 # Pillowのインポート（ImportErrorは後でチェック）
@@ -116,21 +67,13 @@ except ImportError:
     Image = None  # type: ignore
 
 
-
-# サポート形式を動的生成（遅延評価用）
-_supported_formats_cached: Optional[Dict[str, str]] = None
-
-
+@functools.lru_cache(maxsize=1)
 def get_supported_formats() -> Dict[str, str]:
     """Get dictionary of supported file extensions and their PIL format names.
 
     Returns:
         Dict mapping file extensions (e.g., '.jpg') to PIL format names (e.g., 'JPEG')
     """
-    global _supported_formats_cached
-    if _supported_formats_cached is not None:
-        return _supported_formats_cached
-
     fmts = {
         '.jpg': 'JPEG',
         '.jpeg': 'JPEG',
@@ -145,7 +88,6 @@ def get_supported_formats() -> Dict[str, str]:
     if _check_avif_support():
         fmts['.avif'] = 'AVIF'
 
-    _supported_formats_cached = fmts
     return fmts
 
 
@@ -159,6 +101,48 @@ def is_supported_format(file_path: Path) -> bool:
         True if the file extension is supported, False otherwise
     """
     return file_path.suffix.lower() in get_supported_formats()
+
+
+def _normalize_format(format_str: str) -> str:
+    """Normalize format string to PIL format name.
+
+    Args:
+        format_str: Format string (e.g., 'jpg', 'jpeg', 'tif')
+
+    Returns:
+        Normalized PIL format name (e.g., 'JPEG', 'TIFF')
+    """
+    format_upper = format_str.upper()
+    if format_upper == 'JPG':
+        return 'JPEG'
+    elif format_upper == 'TIF':
+        return 'TIFF'
+    return format_upper
+
+
+def _resolve_output_dir(
+    img_file: Path,
+    input_dir: Path,
+    output_dir: Optional[Path],
+    recursive: bool
+) -> Path:
+    """Resolve output directory for an image file.
+
+    Args:
+        img_file: Path to the image file being processed
+        input_dir: Root input directory
+        output_dir: Optional output directory
+        recursive: Whether processing recursively
+
+    Returns:
+        Resolved output directory path
+    """
+    actual_output_dir = output_dir if output_dir else input_dir / "converted"
+    if recursive:
+        rel_path = img_file.parent.relative_to(input_dir)
+        return actual_output_dir / rel_path
+    else:
+        return actual_output_dir
 
 
 def get_output_path(input_path: Path, output_format: str, output_dir: Optional[Path] = None) -> Path:
@@ -228,6 +212,78 @@ def validate_input_path(path: Path, max_size: int = 100_000_000) -> Path:
     return resolved_path
 
 
+def _is_animated_image(img) -> bool:
+    """Check if an image is animated.
+
+    Args:
+        img: PIL Image object
+
+    Returns:
+        True if image is animated, False otherwise
+    """
+    return getattr(img, 'is_animated', False) or (hasattr(img, 'n_frames') and img.n_frames > 1)
+
+
+def _get_animation_formats() -> List[str]:
+    """Get list of formats that support animation.
+
+    Returns:
+        List of format names that support animation
+    """
+    formats = ['WEBP', 'GIF']
+    if _check_avif_support():
+        formats.append('AVIF')
+    return formats
+
+
+def _save_animated_image(
+    img,
+    output_path: Path,
+    output_format: str,
+    lossless: bool
+) -> None:
+    """Save an animated image with appropriate settings.
+
+    Args:
+        img: PIL Image object (animated)
+        output_path: Path to save the image
+        output_format: Target format
+        lossless: Use lossless compression
+    """
+    save_kwargs = {
+        'format': output_format,
+        'save_all': True,
+        'duration': img.info.get('duration', 100),
+        'loop': img.info.get('loop', 0),
+    }
+
+    # WebPとAVIFの場合は最適化オプションを追加
+    if output_format in ['WEBP', 'AVIF']:
+        save_kwargs['optimize'] = True
+        if lossless:
+            save_kwargs['lossless'] = True
+        elif output_format == 'WEBP':
+            save_kwargs['quality'] = 80
+
+    img.save(output_path, **save_kwargs)
+
+
+def _convert_transparent_to_rgb(img):
+    """Convert an image with transparency to RGB with white background.
+
+    Args:
+        img: PIL Image object with transparency
+
+    Returns:
+        PIL Image object in RGB mode
+    """
+    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+    if img.mode == 'P':
+        img = img.convert('RGBA')
+    rgb_img.paste(img, mask=img.split()[-1] if img.mode in ['RGBA', 'LA'] else None)
+    return rgb_img
+
+
 def convert_image(input_path: Path, output_path: Path, output_format: str, lossless: bool = False) -> bool:
     """Convert an image from one format to another.
 
@@ -245,43 +301,15 @@ def convert_image(input_path: Path, output_path: Path, output_format: str, lossl
     """
     try:
         with Image.open(input_path) as img:
-            # アニメーションをサポートする形式
-            animation_formats = ['WEBP', 'GIF']
-            if _check_avif_support():
-                animation_formats.append('AVIF')
-
             # アニメーション画像かチェック
-            is_animated = getattr(img, 'is_animated', False) or (hasattr(img, 'n_frames') and img.n_frames > 1)
-
-            # アニメーションを維持する場合
-            if is_animated and output_format in animation_formats:
-                save_kwargs = {
-                    'format': output_format,
-                    'save_all': True,
-                    'duration': img.info.get('duration', 100),
-                    'loop': img.info.get('loop', 0),
-                }
-
-                # WebPとAVIFの場合は最適化オプションを追加
-                if output_format in ['WEBP', 'AVIF']:
-                    save_kwargs['optimize'] = True
-                    if lossless:
-                        save_kwargs['lossless'] = True
-                    elif output_format == 'WEBP':
-                        save_kwargs['quality'] = 80
-
-                img.save(output_path, **save_kwargs)
+            if _is_animated_image(img) and output_format in _get_animation_formats():
+                _save_animated_image(img, output_path, output_format, lossless)
                 return True
 
             # 透過性を保持しない形式のみ白背景合成
             if output_format in ['JPEG', 'BMP'] and img.mode in ['RGBA', 'LA', 'P']:
-                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-                if img.mode == 'P':
-                    img = img.convert('RGBA')
-                rgb_img.paste(img, mask=img.split()[-1] if img.mode in ['RGBA', 'LA'] else None)
-                img = rgb_img
-            # ICO/AVIFは透過性保持（PillowのICO/AVIFはRGBA対応）
-            # それ以外は既存通り
+                img = _convert_transparent_to_rgb(img)
+
             # WebP/AVIFのロスレス圧縮
             if output_format in ['WEBP', 'AVIF'] and lossless:
                 img.save(output_path, format=output_format, lossless=True)
@@ -290,19 +318,19 @@ def convert_image(input_path: Path, output_path: Path, output_format: str, lossl
             return True
     except OSError as e:
         # File I/O errors, permission denied, disk full, etc.
-        print(f"Error: File operation failed for {input_path}: {e}", file=sys.stderr)
+        logger.error(f"File operation failed for {input_path}: {e}")
         return False
     except MemoryError as e:
         # Out of memory (very large images)
-        print(f"Error: Insufficient memory to process {input_path}: {e}", file=sys.stderr)
+        logger.error(f"Insufficient memory to process {input_path}: {e}")
         return False
     except ValueError as e:
         # Invalid image data or format issues
-        print(f"Error: Invalid image format in {input_path}: {e}", file=sys.stderr)
+        logger.error(f"Invalid image format in {input_path}: {e}")
         return False
     except Exception as e:
         # Catch-all for unexpected errors
-        print(f"Error: Unexpected error converting {input_path}: {type(e).__name__}: {e}", file=sys.stderr)
+        logger.error(f"Unexpected error converting {input_path}: {type(e).__name__}: {e}")
         return False
 
 
@@ -323,19 +351,15 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
         True if processing was successful, False otherwise
     """
     if not input_path.is_file():
-        print(f"Error: File not found: {input_path}", file=sys.stderr)
+        logger.error(f"File not found: {input_path}")
         return False
 
     if not is_supported_format(input_path):
-        print(f"Error: Unsupported file format: {input_path.suffix}", file=sys.stderr)
+        logger.error(f"Unsupported file format: {input_path.suffix}")
         return False
 
     # Get the PIL format name
-    format_upper = output_format.upper()
-    if format_upper == 'JPG':
-        format_upper = 'JPEG'
-    elif format_upper == 'TIF':
-        format_upper = 'TIFF'
+    format_upper = _normalize_format(output_format)
 
     output_path = get_output_path(input_path, output_format, output_dir)
 
@@ -372,7 +396,7 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
         Tuple of (successful_count, failed_count)
     """
     if not input_dir.is_dir():
-        print(f"Error: Directory not found: {input_dir}", file=sys.stderr)
+        logger.error(f"Directory not found: {input_dir}")
         return 0, 0
 
     # Find all supported image files
@@ -400,16 +424,87 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
     fail_count = 0
     actual_output_dir = output_dir if output_dir else input_dir / "converted"
     for img_file in tqdm(image_files, desc="Converting images", unit="file"):
-        rel_output_dir = None
-        if recursive:
-            rel_path = img_file.parent.relative_to(input_dir)
-            rel_output_dir = actual_output_dir / rel_path
-        else:
-            rel_output_dir = actual_output_dir
+        rel_output_dir = _resolve_output_dir(img_file, input_dir, output_dir, recursive)
         if process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless):
             success_count += 1
         else:
             fail_count += 1
+    return success_count, fail_count
+
+
+def _convert_single_file(args_tuple: Tuple[Path, str, Path, bool, bool]) -> Tuple[bool, str]:
+    """Wrapper function for parallel processing.
+
+    Args:
+        args_tuple: Tuple of (img_file, output_format, rel_output_dir, no_confirm, lossless)
+
+    Returns:
+        Tuple of (success: bool, file_path: str)
+    """
+    img_file, output_format, rel_output_dir, no_confirm, lossless = args_tuple
+    try:
+        success = process_file(img_file, output_format, rel_output_dir, no_confirm, verbose=False, lossless=lossless)
+        return (success, str(img_file))
+    except Exception as e:
+        logger.error(f"Error processing {img_file}: {e}")
+        return (False, str(img_file))
+
+
+def _process_directory_parallel(
+    input_dir: Path,
+    output_format: str,
+    output_dir: Optional[Path],
+    no_confirm: bool,
+    recursive: bool,
+    workers: Optional[int],
+    image_files: List[Path],
+    lossless: bool = False
+) -> Tuple[int, int]:
+    """Process directory with parallel execution.
+
+    Args:
+        input_dir: Path to the input directory
+        output_format: Target format
+        output_dir: Optional output directory
+        no_confirm: Skip confirmation for overwriting
+        recursive: Process subdirectories recursively
+        workers: Number of parallel workers (None for CPU count)
+        image_files: List of image files to process
+        lossless: Use lossless compression
+
+    Returns:
+        Tuple of (successful_count, failed_count)
+    """
+    actual_output_dir = output_dir if output_dir else input_dir / "converted"
+    max_workers = workers or os.cpu_count() or 1
+    success_count = 0
+    fail_count = 0
+    tasks = []
+    for img_file in image_files:
+        rel_output_dir = _resolve_output_dir(img_file, input_dir, output_dir, recursive)
+        tasks.append((img_file, output_format, rel_output_dir, no_confirm, lossless))
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_convert_single_file, task): task for task in tasks}
+            with tqdm(total=len(futures), desc="Converting images", unit="file") as pbar:
+                for future in as_completed(futures):
+                    try:
+                        success, img_file = future.result()
+                        if success:
+                            success_count += 1
+                        else:
+                            fail_count += 1
+                    except Exception as e:
+                        logger.error(f"Error in worker: {e}")
+                        fail_count += 1
+                    pbar.update(1)
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user. Cancelling remaining tasks...")
+        # tqdmバーを閉じる
+        try:
+            pbar.close()
+        except Exception:
+            pass
     return success_count, fail_count
 
 
@@ -496,9 +591,16 @@ def main() -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    # Configure logging
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(levelname)s: %(message)s',
+        stream=sys.stderr
+    )
+
     # Check if Pillow is available
     if not PILLOW_AVAILABLE:
-        print("Error: Pillow is not installed. Install it with: pip install Pillow", file=sys.stderr)
+        logger.error("Pillow is not installed. Install it with: pip install Pillow")
         return 1
 
     args = parse_args()
@@ -509,7 +611,7 @@ def main() -> int:
 
     # Validate input path exists
     if not input_path.exists():
-        print(f"Error: Path not found: {input_path}", file=sys.stderr)
+        logger.error(f"Path not found: {input_path}")
         return 1
 
     # Validate input path for security (only for files)
@@ -517,7 +619,7 @@ def main() -> int:
         try:
             input_path = validate_input_path(input_path)
         except (SecurityError, FileNotFoundError) as e:
-            print(f"Error: {e}", file=sys.stderr)
+            logger.error(str(e))
             return 1
 
     # Process file or directory
@@ -538,7 +640,7 @@ def main() -> int:
         print(f"\nConversion complete: {success_count} succeeded, {fail_count} failed")
         return 0 if fail_count == 0 else 1
     else:
-        print(f"Error: Invalid path: {input_path}", file=sys.stderr)
+        logger.error(f"Invalid path: {input_path}")
         return 1
 
 
