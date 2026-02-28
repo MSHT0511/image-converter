@@ -67,3 +67,6 @@ Thumbs.db
 test_output/
 converted/
 *.converted.*
+
+# Log files (keep log/ directory but ignore log files)
+log/*.log

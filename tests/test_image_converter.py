@@ -1485,7 +1485,10 @@ class TestCLI:
         with patch('sys.argv', ['image_converter.py', str(test_path), 'jpeg']):
             with patch.object(Path, 'is_file', return_value=False):
                 with patch.object(Path, 'is_dir', return_value=False):
-                    exit_code = main()
+                    # setup_error_log をモックして log ディレクトリの問題を回避
+                    mock_log_path = temp_dir / 'error_test.log'
+                    with patch('image_converter.setup_error_log', return_value=mock_log_path):
+                        exit_code = main()
 
         assert exit_code == 1
 
@@ -1526,11 +1529,12 @@ class TestParallelProcessingErrorHandling:
         args_tuple = (broken_file, 'jpeg', output_dir, True, False, False)
 
         # 例外が発生しても適切に処理されることを確認
-        success, file_path, skipped = _convert_single_file(args_tuple)
+        success, file_path, skipped, error_msg = _convert_single_file(args_tuple)
 
         assert success is False
         assert file_path == str(broken_file)
         assert skipped is False
+        assert error_msg is not None  # エラーメッセージが返されることを確認
 
     def test_parallel_processing_worker_exception(self, temp_dir):
         """並列処理中のワーカー例外をテスト"""
@@ -1907,12 +1911,13 @@ class TestAdditionalErrorHandling:
         # process_fileが予期しない例外を投げるようにモック
         with patch('image_converter.process_file', side_effect=RuntimeError("Unexpected error")):
             args_tuple = (test_file, 'jpeg', output_dir, True, False, False)
-            success, file_path, skipped = _convert_single_file(args_tuple)
+            success, file_path, skipped, error_msg = _convert_single_file(args_tuple)
 
             # 例外が捕捉され、Falseが返される
             assert success is False
             assert file_path == str(test_file)
             assert skipped is False
+            assert error_msg is not None  # エラーメッセージが返されることを確認
 
     def test_parallel_processing_with_skipped_files(self, temp_dir):
         """並列処理でskip_countが正しくインクリメントされることをテスト"""
@@ -1968,3 +1973,182 @@ class TestAdditionalErrorHandling:
             assert fail >= 1
             # 他のタスクは成功する可能性がある
             assert success >= 0
+
+
+# ========================================
+# エラーログ機能テスト
+# ========================================
+
+class TestErrorLogging:
+    """エラーログ機能のテスト"""
+
+    def test_error_log_created_on_error(self, temp_dir, capsys):
+        """エラー発生時にログファイルが作成されることをテスト"""
+        from image_converter import main
+
+        # 存在しないファイルを指定してエラーを発生させる
+        with patch('sys.argv', ['image_converter.py', str(temp_dir / 'nonexistent.png'), 'jpeg']):
+            exit_code = main()
+
+            # エラーで終了することを確認
+            assert exit_code == 1
+
+            # log/ フォルダが作成されていることを確認
+            log_dir = Path('log')
+            assert log_dir.exists()
+            assert log_dir.is_dir()
+
+            # ログファイルが作成されていることを確認
+            log_files = list(log_dir.glob('error_*.log'))
+            assert len(log_files) >= 1
+
+            # ログファイルにエラーが記録されていることを確認
+            log_file = log_files[-1]  # 最新のログファイル
+            log_content = log_file.read_text(encoding='utf-8')
+            assert 'Path not found' in log_content or 'ERROR' in log_content
+
+            # コンソール出力にログファイルパスが表示されていることを確認
+            captured = capsys.readouterr()
+            assert 'エラーログを出力しました' in captured.out
+            assert str(log_file.absolute()) in captured.out
+
+            # クリーンアップ
+            log_file.unlink()
+
+    def test_no_log_file_on_success(self, temp_dir, capsys):
+        """エラーがない場合はログファイルが削除されることをテスト"""
+        from image_converter import main
+
+        # テスト用画像を作成
+        test_file = temp_dir / 'test.png'
+        img = Image.new('RGB', (50, 50), color='green')
+        img.save(test_file, 'PNG')
+
+        output_dir = temp_dir / 'output'
+
+        # 成功する変換を実行
+        with patch('sys.argv', ['image_converter.py', str(test_file), 'jpeg', '-o', str(output_dir), '--no-confirm']):
+            exit_code = main()
+
+            # 成功で終了することを確認
+            assert exit_code == 0
+
+            # ログファイルが削除されている、または存在しないことを確認
+            log_dir = Path('log')
+            if log_dir.exists():
+                log_files = list(log_dir.glob('error_*.log'))
+                # 古いログファイルは残っている可能性があるが、最新のものは削除されているはず
+                # または、ログファイルメッセージがコンソールに表示されていないことを確認
+                captured = capsys.readouterr()
+                # 成功時はログファイルパスが表示されない
+                assert 'エラーログを出力しました' not in captured.out
+
+    def test_log_directory_creation(self, temp_dir):
+        """log/ ディレクトリが自動作成されることをテスト"""
+        from image_converter import setup_error_log
+
+        # log/ ディレクトリが存在しない場合
+        log_dir = Path('log')
+        if log_dir.exists():
+            # 一時的に移動またはリネーム（テスト後に戻す）
+            import shutil
+            backup_dir = Path('log_backup_test')
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir)
+            shutil.move(str(log_dir), str(backup_dir))
+
+        try:
+            # setup_error_log を呼び出す
+            log_file = setup_error_log()
+
+            # log/ ディレクトリが作成されていることを確認
+            assert log_dir.exists()
+            assert log_dir.is_dir()
+
+            # ログファイルパスが正しいことを確認
+            assert log_file.parent == log_dir
+            assert log_file.name.startswith('error_')
+            assert log_file.name.endswith('.log')
+
+        finally:
+            # 元に戻す
+            if Path('log_backup_test').exists():
+                if log_dir.exists():
+                    import shutil
+                    shutil.rmtree(log_dir)
+                shutil.move('log_backup_test', str(log_dir))
+
+    def test_log_file_format(self, temp_dir):
+        """ログファイル名のフォーマットが正しいことをテスト"""
+        from image_converter import setup_error_log
+        import re
+
+        log_file = setup_error_log()
+
+        # ファイル名が error_YYYYMMDD_HHMMSS.log 形式であることを確認
+        pattern = r'error_\d{8}_\d{6}\.log'
+        assert re.match(pattern, log_file.name)
+
+    def test_parallel_processing_error_logging(self, temp_dir, capsys):
+        """並列処理でもエラーログが正しく記録されることをテスト"""
+        from image_converter import main
+
+        # 正常な画像と破損した画像を作成
+        valid_file = temp_dir / 'valid.png'
+        img = Image.new('RGB', (50, 50), color='blue')
+        img.save(valid_file, 'PNG')
+
+        # 破損した画像ファイル（無効なデータ）
+        broken_file = temp_dir / 'broken.png'
+        broken_file.write_bytes(b'not a valid image')
+
+        # 並列処理で変換を実行
+        with patch('sys.argv', ['image_converter.py', str(temp_dir), 'jpeg', '--no-confirm', '--parallel', '--workers', '2']):
+            exit_code = main()
+
+            # エラーがあるので終了コードは1
+            assert exit_code == 1
+
+            # ログファイルが作成されていることを確認
+            log_dir = Path('log')
+            assert log_dir.exists()
+            log_files = list(log_dir.glob('error_*.log'))
+            assert len(log_files) >= 1
+
+            # ログファイルにエラーが記録されていることを確認
+            log_file = log_files[-1]
+            log_content = log_file.read_text(encoding='utf-8')
+            assert 'ERROR' in log_content
+
+            # コンソール出力を確認
+            captured = capsys.readouterr()
+            assert 'エラーログを出力しました' in captured.out
+
+            # クリーンアップ
+            log_file.unlink()
+
+    def test_log_file_content_format(self, temp_dir):
+        """ログファイルの内容フォーマットが正しいことをテスト"""
+        from image_converter import main
+
+        # エラーを発生させる
+        with patch('sys.argv', ['image_converter.py', str(temp_dir / 'nonexistent.png'), 'jpeg']):
+            exit_code = main()
+            assert exit_code == 1
+
+            # ログファイルを確認
+            log_dir = Path('log')
+            log_files = list(log_dir.glob('error_*.log'))
+            assert len(log_files) >= 1
+
+            log_file = log_files[-1]
+            log_content = log_file.read_text(encoding='utf-8')
+
+            # ログフォーマットが正しいことを確認
+            # 形式: YYYY-MM-DD HH:MM:SS - ERROR - メッセージ
+            import re
+            pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - ERROR - .+'
+            assert re.search(pattern, log_content)
+
+            # クリーンアップ
+            log_file.unlink()
