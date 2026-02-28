@@ -2,7 +2,7 @@
 
 
 [![Test](https://github.com/MSHT0511/image-converter/workflows/Test/badge.svg)](https://github.com/MSHT0511/image-converter/actions)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Star](https://img.shields.io/github/stars/MSHT0511/image-converter?style=social)](https://github.com/MSHT0511/image-converter/stargazers)
 
@@ -40,7 +40,7 @@
 
 ### 前提条件
 
-- Python 3.9以上
+- Python 3.10以上
 - pipパッケージマネージャー
 
 ### ソースからインストール

@@ -15,7 +15,6 @@ import platform
 import sys
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
@@ -71,7 +70,7 @@ except ImportError:
 
 
 @functools.lru_cache(maxsize=1)
-def get_supported_formats() -> Dict[str, str]:
+def get_supported_formats() -> dict[str, str]:
     """Get dictionary of supported file extensions and their PIL format names.
 
     Returns:
@@ -126,7 +125,7 @@ def _normalize_format(format_str: str) -> str:
 def _resolve_output_dir(
     img_file: Path,
     input_dir: Path,
-    output_dir: Optional[Path],
+    output_dir: Path | None,
     recursive: bool
 ) -> Path:
     """Resolve output directory for an image file.
@@ -148,7 +147,7 @@ def _resolve_output_dir(
         return actual_output_dir
 
 
-def get_output_path(input_path: Path, output_format: str, output_dir: Optional[Path] = None) -> Path:
+def get_output_path(input_path: Path, output_format: str, output_dir: Path | None = None) -> Path:
     """Generate the output file path.
 
     Args:
@@ -227,7 +226,7 @@ def _is_animated_image(img) -> bool:
     return getattr(img, 'is_animated', False) or (hasattr(img, 'n_frames') and img.n_frames > 1)
 
 
-def _get_animation_formats() -> List[str]:
+def _get_animation_formats() -> list[str]:
     """Get list of formats that support animation.
 
     Returns:
@@ -341,9 +340,9 @@ def convert_image(input_path: Path, output_path: Path, output_format: str, lossl
         return False
 
 
-def process_file(input_path: Path, output_format: str, output_dir: Optional[Path] = None,
+def process_file(input_path: Path, output_format: str, output_dir: Path | None = None,
                 no_confirm: bool = False, verbose: bool = True, lossless: bool = False,
-                skip_existing: bool = False) -> Tuple[bool, bool]:
+                skip_existing: bool = False) -> tuple[bool, bool]:
     """
     Process a single image file.
 
@@ -396,9 +395,9 @@ def process_file(input_path: Path, output_format: str, output_dir: Optional[Path
         return False, False
 
 
-def process_directory(input_dir: Path, output_format: str, output_dir: Optional[Path] = None,
+def process_directory(input_dir: Path, output_format: str, output_dir: Path | None = None,
                      no_confirm: bool = False, recursive: bool = True,
-                     parallel: bool = False, workers: Optional[int] = None, lossless: bool = False) -> Tuple[int, int, int]:
+                     parallel: bool = False, workers: int | None = None, lossless: bool = False) -> tuple[int, int, int]:
     """Process all images in a directory.
 
     Args:
@@ -462,12 +461,12 @@ def process_directory(input_dir: Path, output_format: str, output_dir: Optional[
 
 
 def _check_existing_files(
-    image_files: List[Path],
+    image_files: list[Path],
     output_format: str,
     input_dir: Path,
-    output_dir: Optional[Path],
+    output_dir: Path | None,
     recursive: bool
-) -> List[Path]:
+) -> list[Path]:
     """Check which output files already exist.
 
     Args:
@@ -489,7 +488,7 @@ def _check_existing_files(
     return existing
 
 
-def _prompt_overwrite_policy(existing_files: List[Path]) -> str:
+def _prompt_overwrite_policy(existing_files: list[Path]) -> str:
     """Prompt user for overwrite policy when existing files are found.
 
     Args:
@@ -526,14 +525,14 @@ def _prompt_overwrite_policy(existing_files: List[Path]) -> str:
             print("Invalid choice. Please enter 'a', 's', or 'c'.")
 
 
-def _convert_single_file(args_tuple: Tuple) -> Tuple[bool, str, bool, Optional[str]]:
+def _convert_single_file(args_tuple: tuple) -> tuple[bool, str, bool, str | None]:
     """Convert a single file (wrapper for parallel processing).
 
     Args:
         args_tuple: Tuple of (img_file, output_format, rel_output_dir, no_confirm, lossless, skip_existing)
 
     Returns:
-        Tuple of (success: bool, file_path: str, skipped: bool, error_message: Optional[str])
+        Tuple of (success: bool, file_path: str, skipped: bool, error_message: str | None)
     """
     img_file, output_format, rel_output_dir, no_confirm, lossless, skip_existing = args_tuple
     try:
@@ -554,13 +553,13 @@ def _convert_single_file(args_tuple: Tuple) -> Tuple[bool, str, bool, Optional[s
 def _process_directory_parallel(
     input_dir: Path,
     output_format: str,
-    output_dir: Optional[Path],
+    output_dir: Path | None,
     no_confirm: bool,
     recursive: bool,
-    workers: Optional[int],
-    image_files: List[Path],
+    workers: int | None,
+    image_files: list[Path],
     lossless: bool = False
-) -> Tuple[int, int, int]:
+) -> tuple[int, int, int]:
     """Process directory with parallel execution.
 
     Args:
@@ -659,7 +658,7 @@ def _process_directory_parallel(
     return success_count, fail_count, skip_count
 
 
-def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments.
 
     Args:
@@ -783,7 +782,7 @@ def add_error_file_handler(log_file: Path) -> logging.FileHandler:
     return file_handler
 
 
-def write_log_context(log_file: Path, args: Optional[argparse.Namespace] = None) -> None:
+def write_log_context(log_file: Path, args: argparse.Namespace | None = None) -> None:
     """Write execution context information to the log file.
 
     Args:
@@ -799,14 +798,14 @@ def write_log_context(log_file: Path, args: Optional[argparse.Namespace] = None)
             f.write(f"OS: {platform.system()} {platform.release()}\n")
             f.write(f"Python: {sys.version.split()[0]}\n")
             f.write(f"Working Directory: {os.getcwd()}\n")
-            
+
             # Pillow version
             try:
                 from PIL import __version__ as pil_version
                 f.write(f"Pillow: {pil_version}\n")
             except ImportError:
                 f.write("Pillow: Not available\n")
-            
+
             # Available formats
             try:
                 formats = get_supported_formats()
@@ -814,7 +813,7 @@ def write_log_context(log_file: Path, args: Optional[argparse.Namespace] = None)
                 f.write(f"Supported Formats: {format_list}\n")
             except Exception:
                 pass
-            
+
             # Command-line arguments details
             if args:
                 f.write(f"\nExecution Settings:\n")
@@ -831,7 +830,7 @@ def write_log_context(log_file: Path, args: Optional[argparse.Namespace] = None)
                     f.write(f"  Lossless: Yes\n")
                 if hasattr(args, 'no_recursive') and args.no_recursive:
                     f.write(f"  Recursive: No\n")
-            
+
             f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 60 + "\n\n")
     except Exception:
