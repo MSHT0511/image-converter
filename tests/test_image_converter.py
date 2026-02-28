@@ -1876,8 +1876,9 @@ class TestAdditionalErrorHandling:
         original_is_relative_to = Path.is_relative_to
 
         def mock_is_relative_to(self, other):
-            # convertedディレクトリのチェック時に例外を発生させる
-            if 'output' in str(other):
+            # convertedディレクトリまたはoutputディレクトリのチェック時に例外を発生させる
+            # パスの最後の部分（basename）が 'output' または 'converted' の場合のみ
+            if hasattr(other, 'name') and other.name in ('output', 'converted'):
                 raise ValueError("Cannot determine relative path")
             return original_is_relative_to(self, other)
 
