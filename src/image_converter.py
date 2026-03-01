@@ -435,7 +435,6 @@ def process_directory(
     print('Scanning for image files...', flush=True)
     supported_formats = get_supported_formats()
     # Use a single glob/rglob for all files, then filter by extension (faster for large directories)
-    pattern = '**/*' if recursive else '*'
     all_files = input_dir.rglob('*') if recursive else input_dir.glob('*')
 
     # Create set of supported extensions (both cases)
