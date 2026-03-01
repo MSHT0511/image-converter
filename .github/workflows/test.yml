@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+      pull-requests: write
     strategy:
       matrix:
         include:
@@ -48,11 +51,12 @@ jobs:
       run: |
         pytest tests/ -v --cov=src --cov-report=term-missing --cov-report=xml
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+    - name: Post coverage comment to PR
+      uses: py-cov-action/python-coverage-comment-action@v3
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
       with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+        GITHUB_TOKEN: ${{ github.token }}
+        ANNOTATE_MISSING_LINES: true
+        ANNOTATION_TYPE: warning
+        MINIMUM_GREEN: 90
+        MINIMUM_ORANGE: 70
