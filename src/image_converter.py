@@ -462,19 +462,15 @@ def process_directory(
 
     print(f'Found {len(image_files)} image(s) to convert')
 
-    # Display CPU cores and worker count
-    cpu_count = os.cpu_count() or 1
-    if parallel:
-        max_workers = workers or max(1, int(cpu_count * 1.5))
-        print(f'CPU cores: {cpu_count}, Workers: {max_workers} (parallel processing for better I/O utilization)')
-    else:
-        print(f'CPU cores: {cpu_count}, Workers: 1 (sequential processing)')
-
     # 並列処理フラグで分岐
     if parallel:
         return _process_directory_parallel(
             input_dir, output_format, output_dir, no_confirm, recursive, workers, image_files, lossless=lossless
         )
+
+    # Display CPU cores for sequential processing
+    cpu_count = os.cpu_count() or 1
+    print(f'CPU cores: {cpu_count}, Workers: 1 (sequential processing)')
 
     success_count = 0
     fail_count = 0
@@ -648,6 +644,10 @@ def _process_directory_parallel(
             elif policy == 'all':
                 # Proceed with overwriting, set no_confirm to True for workers
                 no_confirm = True
+
+    # Display CPU cores and worker count before starting parallel processing
+    cpu_count = os.cpu_count() or 1
+    print(f'CPU cores: {cpu_count}, Workers: {max_workers} (parallel processing for better I/O utilization)')
 
     tasks = []
     for img_file in image_files:
