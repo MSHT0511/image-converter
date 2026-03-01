@@ -147,6 +147,10 @@ def _resolve_output_dir(img_file: Path, input_dir: Path, output_dir: Path | None
         return actual_output_dir
 
 
+# Cache for directories that have been created to avoid redundant mkdir calls
+_created_dirs: set[Path] = set()
+
+
 def get_output_path(input_path: Path, output_format: str, output_dir: Path | None = None) -> Path:
     """Generate the output file path.
 
@@ -163,13 +167,18 @@ def get_output_path(input_path: Path, output_format: str, output_dir: Path | Non
     """
     try:
         if output_dir:
-            output_dir.mkdir(parents=True, exist_ok=True)
+            # Only create directory if we haven't created it before
+            if output_dir not in _created_dirs:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                _created_dirs.add(output_dir)
             stem = input_path.stem
             return output_dir / f'{stem}.{output_format.lower()}'
         else:
             # If no output directory is specified, create a "converted" folder in the same directory
             default_output_dir = input_path.parent / 'converted'
-            default_output_dir.mkdir(parents=True, exist_ok=True)
+            if default_output_dir not in _created_dirs:
+                default_output_dir.mkdir(parents=True, exist_ok=True)
+                _created_dirs.add(default_output_dir)
             return default_output_dir / f'{input_path.stem}.{output_format.lower()}'
     except OSError as e:
         raise OSError(f'Failed to create output directory: {e}') from e
@@ -424,13 +433,18 @@ def process_directory(
 
     # Find all supported image files
     print('Scanning for image files...', flush=True)
-    image_files_set = set()
-    pattern = '**/*' if recursive else '*'
-
     supported_formats = get_supported_formats()
+    # Use a single glob/rglob for all files, then filter by extension (faster for large directories)
+    all_files = input_dir.rglob('*') if recursive else input_dir.glob('*')
+
+    # Create set of supported extensions (both cases)
+    supported_exts = set()
     for ext in supported_formats.keys():
-        image_files_set.update(input_dir.glob(f'{pattern}{ext}'))
-        image_files_set.update(input_dir.glob(f'{pattern}{ext.upper()}'))
+        supported_exts.add(ext.lower())
+        supported_exts.add(ext.upper())
+
+    # Filter files by extension
+    image_files_set = {f for f in all_files if f.is_file() and f.suffix in supported_exts}
 
     # Exclude files in the output directory to avoid processing already converted files
     actual_output_dir = output_dir if output_dir else input_dir / 'converted'
@@ -486,11 +500,23 @@ def _check_existing_files(
     Returns:
         List of input files whose output files already exist
     """
+    # Optimization: Build a set of existing output files first
+    # This is faster than checking exists() for each file individually
+    actual_output_dir = output_dir if output_dir else input_dir / 'converted'
+    existing_output_files = set()
+
+    if actual_output_dir.exists():
+        # Recursively get all files in output directory
+        for output_file in actual_output_dir.rglob('*') if recursive else actual_output_dir.glob('*'):
+            if output_file.is_file():
+                existing_output_files.add(output_file)
+
+    # Now check which input files have corresponding output files
     existing = []
     for img_file in image_files:
         rel_output_dir = _resolve_output_dir(img_file, input_dir, output_dir, recursive)
         output_path = get_output_path(img_file, output_format, rel_output_dir)
-        if output_path.exists():
+        if output_path in existing_output_files:
             existing.append(img_file)
     return existing
 
@@ -589,7 +615,9 @@ def _process_directory_parallel(
     Returns:
         Tuple of (successful_count, failed_count, skipped_count)
     """
-    max_workers = workers or os.cpu_count() or 1
+    # Use more workers than CPU count to better utilize I/O wait time
+    # CPU-bound tasks benefit from CPU count, but image processing has significant I/O
+    max_workers = workers or max(1, int((os.cpu_count() or 1) * 1.5))
     success_count = 0
     fail_count = 0
     skip_count = 0
