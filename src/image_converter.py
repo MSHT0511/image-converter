@@ -941,7 +941,9 @@ def main() -> int:
                 seconds = int(elapsed_time % 60)
                 time_str = f'{minutes}m {seconds}s'
 
-            print(f'\nConversion complete: {success_count} succeeded, {fail_count} failed, {skip_count} skipped (took {time_str})')
+            print(
+                f'\nConversion complete: {success_count} succeeded, {fail_count} failed, {skip_count} skipped (took {time_str})'
+            )
             return 0 if fail_count == 0 else 1
         else:
             logger.error(f'Invalid path: {input_path}')
