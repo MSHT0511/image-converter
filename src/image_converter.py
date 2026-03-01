@@ -11,6 +11,7 @@ import logging
 import os
 import platform
 import sys
+import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
@@ -461,6 +462,14 @@ def process_directory(
 
     print(f'Found {len(image_files)} image(s) to convert')
 
+    # Display CPU cores and worker count
+    cpu_count = os.cpu_count() or 1
+    if parallel:
+        max_workers = workers or max(1, int(cpu_count * 1.5))
+        print(f'CPU cores: {cpu_count}, Workers: {max_workers} (parallel processing for better I/O utilization)')
+    else:
+        print(f'CPU cores: {cpu_count}, Workers: 1 (sequential processing)')
+
     # 並列処理フラグで分岐
     if parallel:
         return _process_directory_parallel(
@@ -909,6 +918,7 @@ def main() -> int:
                 error_occurred = True
             return 0 if success else 1
         elif input_path.is_dir():
+            start_time = time.time()
             success_count, fail_count, skip_count = process_directory(
                 input_path,
                 output_format,
@@ -919,10 +929,19 @@ def main() -> int:
                 workers=args.workers,
                 lossless=args.lossless,
             )
+            elapsed_time = time.time() - start_time
             if fail_count > 0:
                 error_occurred = True
 
-            print(f'\nConversion complete: {success_count} succeeded, {fail_count} failed, {skip_count} skipped')
+            # Format elapsed time
+            if elapsed_time < 60:
+                time_str = f'{elapsed_time:.1f}s'
+            else:
+                minutes = int(elapsed_time // 60)
+                seconds = int(elapsed_time % 60)
+                time_str = f'{minutes}m {seconds}s'
+
+            print(f'\nConversion complete: {success_count} succeeded, {fail_count} failed, {skip_count} skipped (took {time_str})')
             return 0 if fail_count == 0 else 1
         else:
             logger.error(f'Invalid path: {input_path}')
