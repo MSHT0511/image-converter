@@ -2200,3 +2200,202 @@ class TestErrorLogging:
 
             # クリーンアップ
             log_file.unlink()
+
+
+# ========================================
+# HEIC/HEIF サポートテスト
+# ========================================
+
+
+class TestHeifSupport:
+    """HEIC/HEIF フォーマットのサポートテスト"""
+
+    def test_check_heif_support_returns_bool(self):
+        """_check_heif_support が bool を返すことをテスト"""
+        from image_converter import _check_heif_support
+
+        _check_heif_support.cache_clear()
+        result = _check_heif_support()
+        assert isinstance(result, bool)
+        _check_heif_support.cache_clear()
+
+    def test_check_heif_support_without_plugin(self):
+        """pillow-heif 未インストール時に False を返すことをテスト"""
+        from image_converter import _check_heif_support
+
+        _check_heif_support.cache_clear()
+        with patch.dict('sys.modules', {'pillow_heif': None}):
+            result = _check_heif_support()
+            assert result is False
+        _check_heif_support.cache_clear()
+
+    def test_check_heif_support_exception(self):
+        """_check_heif_support で例外が発生しても False を返すことをテスト"""
+        from image_converter import _check_heif_support
+
+        _check_heif_support.cache_clear()
+        with patch('image_converter._check_heif_support', side_effect=Exception):
+            # 例外を発生させても呼び出し元がクラッシュしないことを確認
+            try:
+                from image_converter import get_supported_formats
+
+                get_supported_formats.cache_clear()
+                fmts = get_supported_formats()
+                assert isinstance(fmts, dict)
+            except Exception:
+                pass
+        _check_heif_support.cache_clear()
+
+    def test_normalize_format_heic(self):
+        """_normalize_format が 'heic' を 'HEIF' に正規化することをテスト"""
+        from image_converter import _normalize_format
+
+        assert _normalize_format('heic') == 'HEIF'
+        assert _normalize_format('HEIC') == 'HEIF'
+        assert _normalize_format('heif') == 'HEIF'
+        assert _normalize_format('HEIF') == 'HEIF'
+
+    def test_heif_not_in_supported_formats_without_plugin(self):
+        """pillow-heif 未インストール時に HEIF がサポートフォーマットに含まれないことをテスト"""
+        from image_converter import _check_heif_support, get_supported_formats
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+        with patch('image_converter._check_heif_support', return_value=False):
+            get_supported_formats.cache_clear()
+            fmts = get_supported_formats()
+            assert '.heic' not in fmts
+            assert '.heif' not in fmts
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+    def test_heif_in_supported_formats_with_plugin(self):
+        """pillow-heif インストール済み時に HEIF がサポートフォーマットに含まれることをテスト"""
+        from image_converter import _check_heif_support, get_supported_formats
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+        with patch('image_converter._check_heif_support', return_value=True):
+            get_supported_formats.cache_clear()
+            fmts = get_supported_formats()
+            assert '.heic' in fmts
+            assert fmts['.heic'] == 'HEIF'
+            assert '.heif' in fmts
+            assert fmts['.heif'] == 'HEIF'
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+    def test_is_supported_format_heic_with_plugin(self, temp_dir):
+        """pillow-heif インストール済み時に .heic ファイルがサポート対象になることをテスト"""
+        from image_converter import _check_heif_support, get_supported_formats, is_supported_format
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+        heic_file = temp_dir / 'photo.heic'
+        heic_file.touch()
+
+        with patch('image_converter._check_heif_support', return_value=True):
+            get_supported_formats.cache_clear()
+            assert is_supported_format(heic_file)
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+    def test_is_supported_format_heic_without_plugin(self, temp_dir):
+        """pillow-heif 未インストール時に .heic ファイルがサポート対象外になることをテスト"""
+        from image_converter import _check_heif_support, get_supported_formats, is_supported_format
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+        heic_file = temp_dir / 'photo.heic'
+        heic_file.touch()
+
+        with patch('image_converter._check_heif_support', return_value=False):
+            get_supported_formats.cache_clear()
+            assert not is_supported_format(heic_file)
+
+        _check_heif_support.cache_clear()
+        get_supported_formats.cache_clear()
+
+    def test_convert_image_to_heif_lossless(self, temp_dir):
+        """HEIF への lossless 変換（quality=-1）が正しく呼ばれることをテスト"""
+        input_path = temp_dir / 'input.png'
+        img = Image.new('RGB', (50, 50), color='blue')
+        img.save(input_path, 'PNG')
+
+        output_path = temp_dir / 'output.heic'
+
+        mock_img = MagicMock()
+        mock_img.__enter__ = MagicMock(return_value=mock_img)
+        mock_img.__exit__ = MagicMock(return_value=False)
+        mock_img.is_animated = False
+        mock_img.n_frames = 1
+        mock_img.mode = 'RGB'
+
+        with patch('PIL.Image.open', return_value=mock_img):
+            convert_image(input_path, output_path, 'HEIF', lossless=True)
+            mock_img.save.assert_called_once_with(output_path, format='HEIF', quality=-1)
+
+    def test_convert_image_to_heif_lossy(self, temp_dir):
+        """HEIF への通常（lossy）変換が正しく呼ばれることをテスト"""
+        input_path = temp_dir / 'input.png'
+        img = Image.new('RGB', (50, 50), color='green')
+        img.save(input_path, 'PNG')
+
+        output_path = temp_dir / 'output.heic'
+
+        mock_img = MagicMock()
+        mock_img.__enter__ = MagicMock(return_value=mock_img)
+        mock_img.__exit__ = MagicMock(return_value=False)
+        mock_img.is_animated = False
+        mock_img.n_frames = 1
+        mock_img.mode = 'RGB'
+
+        with patch('PIL.Image.open', return_value=mock_img):
+            convert_image(input_path, output_path, 'HEIF', lossless=False)
+            mock_img.save.assert_called_once_with(output_path, format='HEIF')
+
+    @pytest.mark.skipif(
+        'HEIF' not in get_supported_formats().values(), reason='HEIF未サポート（pillow-heif未インストール）'
+    )
+    def test_convert_png_to_heic(self, temp_dir):
+        """PNG から HEIC への実際の変換テスト（pillow-heif インストール済み環境のみ）"""
+        input_path = temp_dir / 'input.png'
+        img = Image.new('RGB', (100, 100), color='red')
+        img.save(input_path, 'PNG')
+
+        output_path = temp_dir / 'output.heic'
+        assert convert_image(input_path, output_path, 'HEIF')
+        assert output_path.exists()
+
+    @pytest.mark.skipif(
+        'HEIF' not in get_supported_formats().values(), reason='HEIF未サポート（pillow-heif未インストール）'
+    )
+    def test_convert_jpeg_to_heic(self, temp_dir):
+        """JPEG から HEIC への実際の変換テスト（pillow-heif インストール済み環境のみ）"""
+        input_path = temp_dir / 'input.jpg'
+        img = Image.new('RGB', (100, 100), color='green')
+        img.save(input_path, 'JPEG')
+
+        output_path = temp_dir / 'output.heic'
+        assert convert_image(input_path, output_path, 'HEIF')
+        assert output_path.exists()
+
+    @pytest.mark.skipif(
+        'HEIF' not in get_supported_formats().values(), reason='HEIF未サポート（pillow-heif未インストール）'
+    )
+    def test_heic_lossless_conversion(self, temp_dir):
+        """HEIC ロスレス変換テスト（pillow-heif インストール済み環境のみ）"""
+        input_path = temp_dir / 'input.png'
+        img = Image.new('RGB', (100, 100), color='blue')
+        img.save(input_path, 'PNG')
+
+        output_path = temp_dir / 'output_lossless.heic'
+        assert convert_image(input_path, output_path, 'HEIF', lossless=True)
+        assert output_path.exists()

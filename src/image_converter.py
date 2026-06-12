@@ -65,6 +65,22 @@ def _check_avif_support() -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=1)
+def _check_heif_support() -> bool:
+    """Check if HEIF/HEIC format is supported via pillow-heif.
+
+    Returns:
+        True if HEIF is supported, False otherwise
+    """
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+        return True
+    except Exception:
+        return False
+
+
 # Pillowのインポート（ImportErrorは後でチェック）
 try:
     from PIL import Image
@@ -95,6 +111,9 @@ def get_supported_formats() -> dict[str, str]:
     }
     if _check_avif_support():
         fmts['.avif'] = 'AVIF'
+    if _check_heif_support():
+        fmts['.heic'] = 'HEIF'
+        fmts['.heif'] = 'HEIF'
 
     return fmts
 
@@ -125,6 +144,8 @@ def _normalize_format(format_str: str) -> str:
         return 'JPEG'
     elif format_upper == 'TIF':
         return 'TIFF'
+    elif format_upper == 'HEIC':
+        return 'HEIF'
     return format_upper
 
 
@@ -319,6 +340,9 @@ def convert_image(input_path: Path, output_path: Path, output_format: str, lossl
             # WebP/AVIFのロスレス圧縮
             if output_format in ['WEBP', 'AVIF'] and lossless:
                 img.save(output_path, format=output_format, lossless=True)
+            elif output_format == 'HEIF' and lossless:
+                # pillow-heif では quality=-1 がロスレスを意味する
+                img.save(output_path, format=output_format, quality=-1)
             else:
                 img.save(output_path, format=output_format)
             return True
@@ -735,6 +759,8 @@ Examples:
     choices = ['jpeg', 'jpg', 'png', 'bmp', 'gif', 'tiff', 'tif', 'webp', 'ico']
     if _check_avif_support():
         choices.append('avif')
+    if _check_heif_support():
+        choices.extend(['heic', 'heif'])
     parser.add_argument('format', type=str, choices=choices, help='Output image format')
 
     parser.add_argument('-o', '--output-dir', type=str, help='Output directory (default: same as input)')
